@@ -23,15 +23,15 @@
 // parameters
 float targetTempA = 22;
 float targetTempB = 22;
-int time_delay = 5000;
 int max_duty_cycleA = 127;  // =50% ->  [12V (power supply) - 2V (L298N voltage drop)] * max_duty_cycle = 5V
 int max_duty_cycleB = 127;  // =50% ->  [12V (power supply) - 2V (L298N voltage drop)] * max_duty_cycle = 5V
+int time_delay = 5000;
 
 // Temperature Sensors
 #define DHTpin1 14   //D5 of NodeMCU is GPIO14
 #define DHTpin2 12   //D6 of NodeMCU is GPIO12
-DHTesp dht1;
-DHTesp dht2;
+DHTesp dhtA;
+DHTesp dhtB;
 
 // L298N Driver
 int ENA = D7;
@@ -67,6 +67,9 @@ float value6 = 0;
 
 void setup() {
 
+  Serial.println();
+  Serial.println("Booting MCU...");
+
   // Onboard LED
   pinMode(LED_BUILTIN, OUTPUT);  // GPIO 16
 
@@ -75,15 +78,15 @@ void setup() {
   delay(10);
   Serial.println('\n');
 
-  // Set Sensor 01
+  // Set Sensor A
   Serial.println();
-  Serial.println("Setting up sensor 1");
-  dht1.setup(DHTpin1, DHTesp::DHT11); //for DHT11 Connect DHT sensor to GPIO 14
+  Serial.println("Setting up sensor A");
+  dhtA.setup(DHTpin1, DHTesp::DHT11); //for DHT11 Connect DHT sensor to GPIO 14
   
-  // Set Sensor 02
+  // Set Sensor B
   Serial.println();
-  Serial.println("Setting up sensor 2");
-  dht2.setup(DHTpin2, DHTesp::DHT11); //for DHT11 Connect DHT sensor to GPIO 12
+  Serial.println("Setting up sensor B");
+  dhtB.setup(DHTpin2, DHTesp::DHT11); //for DHT11 Connect DHT sensor to GPIO 12
 
   // Setup L298N driver pins
   pinMode(ENA, OUTPUT);
@@ -123,7 +126,7 @@ void setup() {
 
   // Try to connect for a maximum of 5 times
   bool flag = false;
-  for (int i=0; i<5; i++){ 
+  for (int i=0; i<10; i++){ 
     int retval = client->connect(host, httpsPort);
     if (retval == 1){
        flag = true;
@@ -182,8 +185,8 @@ void loop() {
     DynamicJsonDocument doc(1024);
     deserializeJson(doc, json_response);  
 
-    targetTempA = doc["target1"];
-    targetTempB = doc["target2"];
+    targetTempA = doc["targetA"];
+    targetTempB = doc["targetB"];
     time_delay = doc["delay"];
     max_duty_cycleA = int(doc["max_duty_cycleA"]);
     max_duty_cycleB = int(doc["max_duty_cycleB"]);
@@ -201,25 +204,25 @@ void loop() {
     Serial.println(max_duty_cycleB);
   }
 
-  // Get data from sensor 1
-  delay(dht1.getMinimumSamplingPeriod());
-  float humidity1 = dht1.getHumidity();
-  float temperature1 = dht1.getTemperature();
+  // Get data from sensor A
+  delay(dhtA.getMinimumSamplingPeriod());
+  float humidityA = dhtA.getHumidity();
+  float temperatureA = dhtA.getTemperature();
   
   // very dummy controller
-  if (targetTempA > temperature1) {
+  if (targetTempA > temperatureA) {
     powerA = max_duty_cycleA;
   } else {
     powerA = 0;
   }
   analogWrite(ENA, powerA);
 
-  // Get data from sensor 2
-  delay(dht2.getMinimumSamplingPeriod());
-  float humidity2 = dht2.getHumidity();
-  float temperature2 = dht2.getTemperature();
+  // Get data from sensor B
+  delay(dhtB.getMinimumSamplingPeriod());
+  float humidityB = dhtB.getHumidity();
+  float temperatureB = dhtB.getTemperature();
 
-  if (targetTempB > temperature2) {
+  if (targetTempB > temperatureB) {
     powerB = max_duty_cycleB;
   } else {
     powerB = 0;
@@ -227,31 +230,32 @@ void loop() {
   analogWrite(ENB, powerB);
 
   // print status
-  Serial.println("Sensor 1");
-  Serial.print(dht1.getStatusString());
+  Serial.println("Sensor A");
+  Serial.print(dhtA.getStatusString());
   Serial.print("\t");
-  Serial.print(humidity1, 1);
+  Serial.print(humidityA, 1);
   Serial.print("\t\t");
-  Serial.print(temperature1, 1);
+  Serial.print(temperatureA, 1);
   Serial.print("\t\t");
   Serial.println(powerA, 0);
 
-  Serial.println("Sensor 2");
-  Serial.print(dht2.getStatusString());
+  Serial.println("Sensor B");
+  Serial.print(dhtB.getStatusString());
   Serial.print("\t");
-  Serial.print(humidity2, 1);
+  Serial.print(humidityB, 1);
   Serial.print("\t\t");
-  Serial.print(temperature2, 1);
+  Serial.print(temperatureB, 1);
   Serial.print("\t\t");
   Serial.println(powerB, 0);
+
 
   // POST data into google sheet 
   // Create json object string to send to Google Sheets
 
   // Update counter
   value0 ++;
-  value1 = temperature1;
-  value2 = temperature2;
+  value1 = temperatureA;
+  value2 = temperatureB;
   value3 = powerA/max_duty_cycleA;
   value4 = powerB/max_duty_cycleB;
   value5 = targetTempA;
