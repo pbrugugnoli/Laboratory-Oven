@@ -24,7 +24,8 @@
 float targetTempA = 22;
 float targetTempB = 22;
 int time_delay = 5000;
-int max_duty_cycle = 127;  // =50% ->  [12V (power supply) - 2V (L298N voltage drop)] * max_duty_cycle = 5V
+int max_duty_cycleA = 127;  // =50% ->  [12V (power supply) - 2V (L298N voltage drop)] * max_duty_cycle = 5V
+int max_duty_cycleB = 127;  // =50% ->  [12V (power supply) - 2V (L298N voltage drop)] * max_duty_cycle = 5V
 
 // Temperature Sensors
 #define DHTpin1 14   //D5 of NodeMCU is GPIO14
@@ -184,8 +185,9 @@ void loop() {
     targetTempA = doc["target1"];
     targetTempB = doc["target2"];
     time_delay = doc["delay"];
-    max_duty_cycle = int(doc["max_duty_cycle"]);
-   
+    max_duty_cycleA = int(doc["max_duty_cycleA"]);
+    max_duty_cycleB = int(doc["max_duty_cycleB"]);
+      
     // Decode JSON/Extract values
     Serial.print("Target A: \t");
     Serial.println(targetTempA);
@@ -193,8 +195,10 @@ void loop() {
     Serial.println(targetTempB);
     Serial.print("Delay: \t");
     Serial.println(time_delay);
-    Serial.print("Max Duty Cycle: \t");
-    Serial.println(max_duty_cycle);
+    Serial.print("Max Duty Cycle A: \t");
+    Serial.println(max_duty_cycleA);
+    Serial.print("Max Duty Cycle B: \t");
+    Serial.println(max_duty_cycleB);
   }
 
   // Get data from sensor 1
@@ -204,7 +208,7 @@ void loop() {
   
   // very dummy controller
   if (targetTempA > temperature1) {
-    powerA = max_duty_cycle;
+    powerA = max_duty_cycleA;
   } else {
     powerA = 0;
   }
@@ -216,7 +220,7 @@ void loop() {
   float temperature2 = dht2.getTemperature();
 
   if (targetTempB > temperature2) {
-    powerB = max_duty_cycle;
+    powerB = max_duty_cycleB;
   } else {
     powerB = 0;
   }
@@ -248,8 +252,8 @@ void loop() {
   value0 ++;
   value1 = temperature1;
   value2 = temperature2;
-  value3 = powerA/max_duty_cycle;
-  value4 = powerB/max_duty_cycle;
+  value3 = powerA/max_duty_cycleA;
+  value4 = powerB/max_duty_cycleB;
   value5 = targetTempA;
   value6 = targetTempB;
 
