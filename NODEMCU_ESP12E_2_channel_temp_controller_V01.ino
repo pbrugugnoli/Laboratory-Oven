@@ -65,6 +65,12 @@ float value4 = 0;
 float value5 = 0;
 float value6 = 0;
 
+// Declare reading variables
+  float humidityA = 0;
+  float temperatureA = 0;
+  float humidityB = 0;
+  float temperatureB = 0;
+
 void setup() {
 
   Serial.println();
@@ -152,31 +158,7 @@ void setup() {
 
 }
 
-
-void loop() {
-
-  // Turn on LED
-  digitalWrite(LED_BUILTIN, LOW);  
-
-  // Create HTTP client
-  static bool flag = false;
-  if (!flag){
-    client = new HTTPSRedirect(httpsPort);
-    client->setInsecure();
-    flag = true;
-    client->setPrintResponseBody(true);
-    client->setContentTypeHeader("application/json");
-  }
-  if (client != nullptr){
-    if (!client->connected()){
-      client->connect(host, httpsPort);
-    }
-  }
-  else{
-    Serial.println("Error creating client object!");
-  }
-
-  // GET data from google sheet
+void get_data_from_sheets(HTTPSRedirect * client){
   Serial.println("Getting data...");
   if(client->GET(url, host)){ 
     //String json_response = client->getResponseBody();
@@ -203,55 +185,9 @@ void loop() {
     Serial.print("Max Duty Cycle B: \t");
     Serial.println(max_duty_cycleB);
   }
+}
 
-  // Get data from sensor A
-  delay(dhtA.getMinimumSamplingPeriod());
-  float humidityA = dhtA.getHumidity();
-  float temperatureA = dhtA.getTemperature();
-  
-  // very dummy controller
-  if (targetTempA > temperatureA) {
-    powerA = max_duty_cycleA;
-  } else {
-    powerA = 0;
-  }
-  analogWrite(ENA, powerA);
-
-  // Get data from sensor B
-  delay(dhtB.getMinimumSamplingPeriod());
-  float humidityB = dhtB.getHumidity();
-  float temperatureB = dhtB.getTemperature();
-
-  if (targetTempB > temperatureB) {
-    powerB = max_duty_cycleB;
-  } else {
-    powerB = 0;
-  }
-  analogWrite(ENB, powerB);
-
-  // print status
-  Serial.println("Sensor A");
-  Serial.print(dhtA.getStatusString());
-  Serial.print("\t");
-  Serial.print(humidityA, 1);
-  Serial.print("\t\t");
-  Serial.print(temperatureA, 1);
-  Serial.print("\t\t");
-  Serial.println(powerA, 0);
-
-  Serial.println("Sensor B");
-  Serial.print(dhtB.getStatusString());
-  Serial.print("\t");
-  Serial.print(humidityB, 1);
-  Serial.print("\t\t");
-  Serial.print(temperatureB, 1);
-  Serial.print("\t\t");
-  Serial.println(powerB, 0);
-
-
-  // POST data into google sheet 
-  // Create json object string to send to Google Sheets
-
+void post_data_to_sheets(HTTPSRedirect * client){
   // Update counter
   value0 ++;
   value1 = temperatureA;
@@ -274,6 +210,93 @@ void loop() {
     // do stuff here if publish was not successful
     Serial.println("Error while connecting");
   }
+}
+
+void get_data_from_sensors(){
+  // Retrieve data from sensor A
+  delay(dhtA.getMinimumSamplingPeriod());
+  humidityA = dhtA.getHumidity();
+  temperatureA = dhtA.getTemperature();
+
+  // Retrieve data from sensor B
+  delay(dhtB.getMinimumSamplingPeriod());
+  humidityB = dhtB.getHumidity();
+  temperatureB = dhtB.getTemperature();
+
+  // print status
+  Serial.println("Sensor A");
+  Serial.print(dhtA.getStatusString());
+  Serial.print("\t");
+  Serial.print(humidityA, 1);
+  Serial.print("\t\t");
+  Serial.print(temperatureA, 1);
+
+  Serial.println("Sensor B");
+  Serial.print(dhtB.getStatusString());
+  Serial.print("\t");
+  Serial.print(humidityB, 1);
+  Serial.print("\t\t");
+  Serial.print(temperatureB, 1);
+}
+
+void set_heater_power(){
+  if (targetTempA > temperatureA) {
+    powerA = max_duty_cycleA;
+  } else {
+    powerA = 0;
+  }
+  analogWrite(ENA, powerA);
+
+  if (targetTempB > temperatureB) {
+    powerB = max_duty_cycleB;
+  } else {
+    powerB = 0;
+  }
+  analogWrite(ENB, powerB);
+
+  // print status
+  Serial.print("New PowerA: ");
+  Serial.println(powerA, 0);
+  Serial.print("New PowerB: ");
+  Serial.println(powerB, 0);
+}
+
+void loop() {
+  // Turn on LED
+  digitalWrite(LED_BUILTIN, LOW);  
+
+  // Create HTTP client
+  static bool flag = false;
+  if (!flag){
+    client = new HTTPSRedirect(httpsPort);
+    client->setInsecure();
+    flag = true;
+    client->setPrintResponseBody(true);
+    client->setContentTypeHeader("application/json");
+  }
+  if (client != nullptr){
+    if (!client->connected()){
+      client->connect(host, httpsPort);
+    }
+  }
+  else{
+    Serial.println("Error creating client object!");
+  }
+
+  // GET data from google sheet
+  get_data_from_sheets(client);
+
+  // Get data from sensors
+  get_data_from_sensors();
+
+  // very dummy controller
+  set_heater_power();
+
+
+  // POST data into google sheet 
+  // Create json object string to send to Google Sheets
+  post_data_to_sheets(client);
+
 
   // Turn off LED
   digitalWrite(LED_BUILTIN, HIGH);  
