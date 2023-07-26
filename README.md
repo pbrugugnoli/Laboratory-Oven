@@ -1,12 +1,4 @@
----
-created: 2023-07-21T13:18
-updated: 2023-07-21T13:18
-alias: Estufa
-tags: Electronics, Maker 
-source: (PEB)
----
-
-# Controlled Laboratory Oven
+# Controlled and Monitored Laboratory Oven
 
 ## Design
 
@@ -23,7 +15,8 @@ source: (PEB)
 		2. It promotes the equalization of heat throughout the box through convection waves.
 		3. Due to its high temperature coefficient, the thermo-gel bag helps maintain the temperature inside the box even when it is open, particularly on colder days."
 		
-- "X-Ray diagram" of the laboratory ovens (boxes)![[Pasted image 20230721132331.png]]
+- "X-Ray diagram" of the laboratory ovens (boxes)
+	![alt text](https://github.com/pbrugugnoli/Laboratory-Oven/blob/master/Images/Pasted image 20230721132331.png?raw=true)
 
 - Bill-of-Material (BOM)
 	- Styrofoam box:  160 x 150 x 115 (external) 140 x 130 x 80 (internal)
@@ -84,16 +77,12 @@ source: (PEB)
 
 
 - Physical build:
-	- System Overview	- ![[Laboratory Ovens (estufas) - Overview - 2.jpeg|600]]
-	- Controller Electronics (NODEMCU ESP12E + L298N Driver)![[Laboratory Ovens (estufas) - Controller System Zoom.jpeg|600]]
-	- Dashboard and Data Log on cloud (google cloud)![[Laboratory Ovens (estufas) - Controller System - Dashboard.jpeg|200]]
- 
-	- Temperature Sensos & Thermogel![[Laboratory Ovens (estufas) - Temperature Sensor and Thermogel.jpeg|600]]
+	- System Overview	- 	![alt text](https://github.com/pbrugugnoli/Laboratory-Oven/blob/master/Images/Laboratory Ovens (estufas) - Overview - 2.jpeg?raw=true)
+	
+	- Controller Electronics (NODEMCU ESP12E + L298N Driver) ![alt text](https://github.com/pbrugugnoli/Laboratory-Oven/blob/master/Images/Laboratory Ovens (estufas) - Controller System Zoom.jpeg?raw=true)
+	
+	- Dashboard and Data Log on cloud (google cloud) ![alt text](https://github.com/pbrugugnoli/Laboratory-Oven/blob/master/Images/Laboratory Ovens (estufas) - Controller System - Dashboard.jpeg?raw=true)
+	
+	- Temperature Sensos & Thermogel ![alt text](https://github.com/pbrugugnoli/Laboratory-Oven/blob/master/Images/Laboratory Ovens (estufas) - Temperature Sensor and Thermogel.jpeg?raw=true)
 
-	- Heater Element (adaptation with tea silicon heater)  ![[Laboratory Ovens (estufas) - Heater Element.jpeg|600]]
-
-
-# Links
-- Access to laboratory oven controller and dashboard:  https://docs.google.com/spreadsheets/d/11LWHlFNlHQVi8g2V9y9Qfw_WbB1ok5Yn8jtM2-29634/edit#gid=344482888
-- [[Electronics]] 
-- [[Maker]] 
+	- Heater Element (adaptation with tea silicon heater) ![alt text](https://github.com/pbrugugnoli/Laboratory-Oven/blob/master/Images/Laboratory Ovens (estufas) - Heater Element.jpeg?raw=true)
