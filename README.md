@@ -16,7 +16,7 @@
 		3. Due to its high temperature coefficient, the thermo-gel bag helps maintain the temperature inside the box even when it is open, particularly on colder days."
 		
 - "X-Ray diagram" of the laboratory ovens (boxes)
-	![alt text](https://github.com/pbrugugnoli/Laboratory-Oven/blob/master/Images/Pasted image 20230721132331.png?raw=true)
+	![alt text](https://github.com/pbrugugnoli/Laboratory-Oven/blob/master/Images/XRAY.png?raw=true)
 
 - Bill-of-Material (BOM)
 	- Styrofoam box:  160 x 150 x 115 (external) 140 x 130 x 80 (internal)
@@ -77,12 +77,12 @@
 
 
 - Physical build:
-	- System Overview	- 	![alt text](https://github.com/pbrugugnoli/Laboratory-Oven/blob/master/Images/Laboratory Ovens (estufas) - Overview - 2.jpeg?raw=true)
+	- System Overview	- 	![alt text](https://github.com/pbrugugnoli/Laboratory-Oven/blob/master/Images/Laboratory-Ovens-(estufas)-Overview-2.jpeg?raw=true)
 	
-	- Controller Electronics (NODEMCU ESP12E + L298N Driver) ![alt text](https://github.com/pbrugugnoli/Laboratory-Oven/blob/master/Images/Laboratory Ovens (estufas) - Controller System Zoom.jpeg?raw=true)
+	- Controller Electronics (NODEMCU ESP12E + L298N Driver) ![alt text](https://github.com/pbrugugnoli/Laboratory-Oven/blob/master/Images/Laboratory-Ovens-(estufas)-Controller-System-Zoom.jpeg?raw=true)
 	
-	- Dashboard and Data Log on cloud (google cloud) ![alt text](https://github.com/pbrugugnoli/Laboratory-Oven/blob/master/Images/Laboratory Ovens (estufas) - Controller System - Dashboard.jpeg?raw=true)
+	- Dashboard and Data Log on cloud (google cloud) ![alt text](https://github.com/pbrugugnoli/Laboratory-Oven/blob/master/Images/Laboratory-Ovens-(estufas)-Controller-System-Dashboard.jpeg?raw=true)
 	
-	- Temperature Sensos & Thermogel ![alt text](https://github.com/pbrugugnoli/Laboratory-Oven/blob/master/Images/Laboratory Ovens (estufas) - Temperature Sensor and Thermogel.jpeg?raw=true)
+	- Temperature Sensos & Thermogel ![alt text](https://github.com/pbrugugnoli/Laboratory-Oven/blob/master/Images/Laboratory-Ovens-(estufas)-Temperature-Sensor-and-Thermogel.jpeg?raw=true)
 
-	- Heater Element (adaptation with tea silicon heater) ![alt text](https://github.com/pbrugugnoli/Laboratory-Oven/blob/master/Images/Laboratory Ovens (estufas) - Heater Element.jpeg?raw=true)
+	- Heater Element (adaptation with tea silicon heater) ![alt text](https://github.com/pbrugugnoli/Laboratory-Oven/blob/master/Images/Laboratory-Ovens-(estufas)-Heater-Element.jpeg?raw=true)
