@@ -15,6 +15,14 @@
 #include "C:\Users\pbrug\Documents\01. PEB Personal\Credenciais Cloud\SecurityGit\credentials.h"
 #include <ArduinoOTA.h>
 
+
+#define HOST_NAME "remotedebug"
+#define USE_ARDUINO_OTA true
+#include "RemoteDebug.h"        //https://github.com/JoaoLopesF/RemoteDebug
+RemoteDebug Debug;
+
+
+
 // Wi fi crendentials
 // const char* ssid     = "xxx"  from crendentials file
 // const char* password = "xxx"  from crendentials file
@@ -121,6 +129,12 @@ void setup() {
   }
   setUpWebServer();
   setUpOverTheAirProgramming();
+
+	// Initialize RemoteDebug
+	Debug.begin(HOST_NAME); // Initialize the WiFi server
+  Debug.setResetCmdEnabled(true); // Enable the reset command
+	Debug.showProfiler(true); // Profiler (Good to measure times, to optimize codes)
+	Debug.showColors(true); // Colors
 
   // Onboard LED
   pinMode(LED_BUILTIN, OUTPUT);  // GPIO 16
@@ -245,6 +259,9 @@ void loop() {
     previousTime = currentTime;      // the last "trigger time" is stored 
   }
 
+  // RemoteDebug handle
+  Debug.handle();
+  
   // a delay between each cycle - to be evaluated .. if it is really required  
   delay(500);
 }
@@ -255,6 +272,8 @@ void loop() {
 
 void get_data_from_sheets(HTTPSRedirect * client){
   Serial.println("Getting data...");
+  debugV("Getting data... \n");
+
   if(client->GET(url, host)){ 
     //String json_response = client->getResponseBody();
     String json_response = client->getResponseBody();
@@ -279,6 +298,8 @@ void get_data_from_sheets(HTTPSRedirect * client){
     Serial.println(max_duty_cycleA);
     Serial.print("Max Duty Cycle B: \t");
     Serial.println(max_duty_cycleB);
+    debugV("Target A: \t %f \n Target B: \t %f \n Delay: \t %d \n Duty A: \t %d \n Duty B: \t %d \n", targetTempA, targetTempB, time_delay, max_duty_cycleA, max_duty_cycleB);
+
   }
 }
 
@@ -296,8 +317,11 @@ void post_data_to_sheets(HTTPSRedirect * client){
   payload = payload_base + "\"" + value0 + "," + value1+ "," + value2 + "," + value3 + "," + value4 + "," + value5 + "," + value6 + "\"}";
   
   // Publish data to Google Sheets
-  Serial.println("Publishing data ...");
+  Serial.println("Publishing data ...");  
   Serial.println(payload);
+
+  debugV("Publishing data ... \n %s", payload.c_str());
+
   if(client->POST(url, host, payload)){ 
     // do stuff here if publish was successful
   }
