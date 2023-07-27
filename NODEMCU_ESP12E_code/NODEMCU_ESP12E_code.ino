@@ -12,23 +12,34 @@
 #include "HTTPSRedirect.h"
 #include "DHTesp.h"
 #include <ArduinoJson.h>
-#include "C:\Users\pbrug\Documents\01. PEB Personal\Credenciais Cloud\SecurityGit\credentials.h"
 #include <ArduinoOTA.h>
+#include "C:\Users\pbrug\Documents\01. PEB Personal\Credenciais Cloud\SecurityGit\credentials.h"
+
+// DISABLE DEBUG FOR PRODUCTION
+//#define DEBUG_DISABLED true
+
+// SELECT BETWEEN SERIAL or NETWORK DEBUG
+#define REMOTE_DEBUG
+
+#ifdef REMOTE_DEBUG
+  // OVER NETWORK DEBUG
+  #include "RemoteDebug.h"            //https://github.com/JoaoLopesF/RemoteDebug
+  #define REMOTE_INITIAL_LEVEL 1      //(VERBOSE)
+  #define TELNET_PORT 23
+  #define HOST_NAME "remotedebug"
+  #define USE_ARDUINO_OTA true
+  RemoteDebug Debug;
+#else
+  // SERIAL DEBUGGER
+  #include "SerialDebug.h"           // https://github.com/JoaoLopesF/SerialDebug
+  #define DEBUG_INITIAL_LEVEL DEBUG_LEVEL_VERBOSE
+  //#define DEBUG_DISABLE_DEBUGGER true
+  //#define DEBUG_AUTO_FUNC_DISABLED true
+  //#define DEBUG_USE_FLASH_F true   // IMPORTANT FOR ARDUINO - LOW MEMORY
+  //#define DEBUG_MINIMUM true       // IMPORTANT FOR ARDUINO - LOW MEMORY    
+#endif
 
 
-#define HOST_NAME "remotedebug"
-#define USE_ARDUINO_OTA true
-#include "RemoteDebug.h"        //https://github.com/JoaoLopesF/RemoteDebug
-RemoteDebug Debug;
-
-
-
-// Wi fi crendentials
-// const char* ssid     = "xxx"  from crendentials file
-// const char* password = "xxx"  from crendentials file
-
-// Enter Google Script Deployment ID:
-// const char *GScriptId = "xxx"  from crendentials file
 
 // Configuration for fallback access point 
 // if Wi-Fi connection fails.
@@ -113,10 +124,8 @@ void setup() {
   // Serial Communication
   Serial.begin(9600);        
   delay(10);
-  Serial.println('\n');
 
-  Serial.println();
-  Serial.println("Booting MCU - v1.3 in 10 seconds ...");
+  debugA("\n \n Booting MCU - v1.5 in 10 seconds ...\n \n");
   delay(10000);
 
   // init EEPROM object 
@@ -131,25 +140,23 @@ void setup() {
   setUpOverTheAirProgramming();
 
 	// Initialize RemoteDebug
-	Debug.begin(HOST_NAME); // Initialize the WiFi server
-  Debug.setResetCmdEnabled(true); // Enable the reset command
-	Debug.showProfiler(true); // Profiler (Good to measure times, to optimize codes)
-	Debug.showColors(true); // Colors
+  #ifdef REMOTE_DEBUG  
+    Debug.begin(HOST_NAME, TELNET_PORT, REMOTE_INITIAL_LEVEL); // Initialize the WiFi server
+    Debug.setResetCmdEnabled(true); // Enable the reset command
+    Debug.showProfiler(true); // Profiler (Good to measure times, to optimize codes)
+    Debug.showColors(true); // Colors
+  #endif
 
   // Onboard LED
   pinMode(LED_BUILTIN, OUTPUT);  // GPIO 16
 
-  // Set Sensor A
-  Serial.println();
-  Serial.println("Setting up sensor A");
+  // Set Sensor A and B
+  debugV("Setting up sensors...");
   dhtA.setup(DHTpin1, DHTesp::DHT11); //for DHT11 Connect DHT sensor to GPIO 14
-  
-  // Set Sensor B
-  Serial.println();
-  Serial.println("Setting up sensor B");
   dhtB.setup(DHTpin2, DHTesp::DHT11); //for DHT11 Connect DHT sensor to GPIO 12
 
   // Setup L298N driver pins
+  debugV("Setting up L298N pins...");
   pinMode(ENA, OUTPUT);
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT); 
@@ -163,34 +170,28 @@ void setup() {
   digitalWrite(IN4, HIGH);
 
   // Use HTTPSRedirect class to create a new TLS connection
+  debugV("Connecting to %s", host);
+
   client = new HTTPSRedirect(httpsPort);
   client->setInsecure();
   client->setPrintResponseBody(true);
   client->setContentTypeHeader("application/json");
   
-  Serial.print("Connecting to ");
-  Serial.println(host);
-
-  // Try to connect for a maximum of 5 times
+  // Try to connect for a maximum of 10 times
   bool flag = false;
   for (int i=0; i<10; i++){ 
     int retval = client->connect(host, httpsPort);
     if (retval == 1){
        flag = true;
-       Serial.println("Connected");
+       debugV(" - Connected successfully");
        break;
     }
     else
-      Serial.println("Connection failed. Retrying...");
+      debugI("Connection failed. Retrying...");
   }
   if (!flag){
-    Serial.print("Could not connect to server: ");
-    Serial.println(host);
+    debugE("Could not connect to %s", host);
     return;
-  }
-  else{
-    // do stuff here if publish was not successful
-    Serial.println("Error while connecting");
   }
  
   // GET data from google sheet - initialize target variables
@@ -227,10 +228,11 @@ void loop() {
   if (client != nullptr){
     if (!client->connected()){
       client->connect(host, httpsPort);
+      // it seems to me that a check if the connection is ok
     }
   }
   else{
-    Serial.println("Error creating client object!");
+    debugE("Error creating HTTPSRedirect object!");
   }
 
   // After each time_delay log data and retrive parameters from google sheet
@@ -260,7 +262,7 @@ void loop() {
   }
 
   // RemoteDebug handle
-  Debug.handle();
+  debugHandle();
   
   // a delay between each cycle - to be evaluated .. if it is really required  
   delay(500);
@@ -271,13 +273,13 @@ void loop() {
 // -------------------------------------------------------------------
 
 void get_data_from_sheets(HTTPSRedirect * client){
-  Serial.println("Getting data...");
-  debugV("Getting data... \n");
 
-  if(client->GET(url, host)){ 
-    //String json_response = client->getResponseBody();
+  debugV("Getting data from Google Sheet...");
+
+  if(client->GET(url, host, false)){ 
     String json_response = client->getResponseBody();
 
+ // Decode JSON/Extract values
     DynamicJsonDocument doc(1024);
     deserializeJson(doc, json_response);  
 
@@ -287,23 +289,16 @@ void get_data_from_sheets(HTTPSRedirect * client){
     max_duty_cycleA = int(doc["max_duty_cycleA"]);
     max_duty_cycleB = int(doc["max_duty_cycleB"]);
       
-    // Decode JSON/Extract values
-    Serial.print("Target A: \t");
-    Serial.println(targetTempA);
-    Serial.print("Target b: \t");
-    Serial.println(targetTempB);
-    Serial.print("Delay: \t");
-    Serial.println(time_delay);
-    Serial.print("Max Duty Cycle A: \t");
-    Serial.println(max_duty_cycleA);
-    Serial.print("Max Duty Cycle B: \t");
-    Serial.println(max_duty_cycleB);
-    debugV("Target A: \t %f \n Target B: \t %f \n Delay: \t %d \n Duty A: \t %d \n Duty B: \t %d \n", targetTempA, targetTempB, time_delay, max_duty_cycleA, max_duty_cycleB);
+    
+    debugV(" - Data >> Target A:\t%f\t\tTarget B:\t%f\t\tDelay:\t%d\t\tDuty A:\t%d\t\tDuty B:\t%d\n", targetTempA, targetTempB, time_delay, max_duty_cycleA, max_duty_cycleB);
 
   }
 }
 
 void post_data_to_sheets(HTTPSRedirect * client){
+
+  debugV("Publishing data into Google Sheets...");  
+
   // Update counter
   value0 ++;
   value1 = temperatureA;
@@ -316,22 +311,19 @@ void post_data_to_sheets(HTTPSRedirect * client){
   // prepare payload
   payload = payload_base + "\"" + value0 + "," + value1+ "," + value2 + "," + value3 + "," + value4 + "," + value5 + "," + value6 + "\"}";
   
-  // Publish data to Google Sheets
-  Serial.println("Publishing data ...");  
-  Serial.println(payload);
-
-  debugV("Publishing data ... \n %s", payload.c_str());
-
-  if(client->POST(url, host, payload)){ 
-    // do stuff here if publish was successful
+  if(client->POST(url, host, payload, false)){ 
+    // Published data to Google Sheets
+    debugV(" - Payload >> %s\n", payload.c_str());
   }
   else{
-    // do stuff here if publish was not successful
-    Serial.println("Error while connecting");
+    debugE(" - Error while connecting\n");
   }
 }
 
 void get_data_from_sensors(){
+  
+  debugV("Retrieve data from sensor...");
+  
   // Retrieve data from sensor A
   delay(dhtA.getMinimumSamplingPeriod());
   humidityA = dhtA.getHumidity();
@@ -343,22 +335,14 @@ void get_data_from_sensors(){
   temperatureB = dhtB.getTemperature();
 
   // print status
-  Serial.println("Sensor A");
-  Serial.print(dhtA.getStatusString());
-  Serial.print("\t");
-  Serial.print(humidityA, 1);
-  Serial.print("\t\t");
-  Serial.println(temperatureA, 1);
-
-  Serial.println("Sensor B");
-  Serial.print(dhtB.getStatusString());
-  Serial.print("\t");
-  Serial.print(humidityB, 1);
-  Serial.print("\t\t");
-  Serial.println(temperatureB, 1);
+  debugV(" - Sensor A >> Status:\t%s\t\tHumidity:\t%f\t\tTemperature:\t%f", dhtA.getStatusString(), humidityA, temperatureA);
+  debugV(" - Sensor B >> Status:\t%s\t\tHumidity:\t%f\t\tTemperature:\t%f\n", dhtB.getStatusString(), humidityB, temperatureB);
 }
 
 void set_heater_power(){
+
+  debugV("Setting PWM signals for heater element power...");
+
   if (targetTempA > temperatureA) {
     powerA = max_duty_cycleA;
   } else {
@@ -374,10 +358,7 @@ void set_heater_power(){
   analogWrite(ENB, powerB);
 
   // print status
-  Serial.print("New PowerA: ");
-  Serial.println(powerA, 0);
-  Serial.print("New PowerB: ");
-  Serial.println(powerB, 0);
+  debugV(" - Power >> Heater A:%d\t\tHeater B:%d\n", powerA, powerB);
 }
 
 
@@ -386,6 +367,9 @@ void set_heater_power(){
 // -------------------------
 
 void readWifiConf() {
+
+  debugV("Retrieving data from EEPROM...");
+
   // Read wifi conf from flash
   for (int i=0; i<sizeof(wifiConf); i++) {
     ((char *)(&wifiConf))[i] = char(EEPROM.read(i));
@@ -395,12 +379,14 @@ void readWifiConf() {
   // if memory is not initalized yet.
   wifiConf.cstr_terminator = 0;
   
-  Serial.println("EEPROM read");
-  Serial.println(wifiConf.wifi_ssid);
-  Serial.println("***PASS***");
+  debugV(" - EEPROM >> SSID: %s \t PASS: *******\n");
 }
 
+
 void writeWifiConf() {
+
+  debugV("Writing data into EEPROM...\n");
+
   for (int i=0; i<sizeof(wifiConf); i++) {
     EEPROM.write(i, ((char *)(&wifiConf))[i]);
   }
@@ -408,33 +394,30 @@ void writeWifiConf() {
 }
 
 bool connectToWiFi() {
-  Serial.printf("Connecting to '%s'\n", wifiConf.wifi_ssid);
+  debugV("Connecting to WiFi - SSID:%s", wifiConf.wifi_ssid);
 
   WiFi.mode(WIFI_STA); // station mode
   WiFi.begin(wifiConf.wifi_ssid, wifiConf.wifi_password);
 
   if (WiFi.waitForConnectResult() == WL_CONNECTED) {
-    Serial.print("Connected. IP: ");
-    Serial.println(WiFi.localIP());
+    debugV(" - Connected with IP: %s\n", WiFi.localIP());
     return true;
   } else {
-    Serial.println("Connection Failed!");
+    debugE(" - Connection to WiFi Failed!\n");
     return false;
   }
 }
 
 void setUpAccessPoint() {
-    Serial.println("Setting up access point.");
-    Serial.printf("SSID: %s\n", AP_ssid);
-    Serial.printf("Password: %s\n", AP_password);
+    debugV("Setting up access point...");
+    debugV(" - SSID: %s\t\t PASS%s", AP_ssid, AP_password);
 
     WiFi.mode(WIFI_AP_STA);
     WiFi.softAPConfig(AP_IP, AP_IP, AP_subnet);
     if (WiFi.softAP(AP_ssid, AP_password)) {
-      Serial.print("Ready. Access point IP: ");
-      Serial.println(WiFi.softAPIP());
+      debugV(" - Access point set to IP:%s", WiFi.softAPIP());
     } else {
-      Serial.println("Setting up access point failed!");
+      debugE("Setting up access point failed!");
     }
 }
 
@@ -444,6 +427,8 @@ void setUpWebServer() {
 }
 
 void handleWebServerRequest() {
+
+  debugV("Handling web server request...");
   bool save = false;
 
   if (server.hasArg("ssid") && server.hasArg("password")) {
@@ -454,11 +439,11 @@ void handleWebServerRequest() {
       wifiConf.wifi_password,
       sizeof(wifiConf.wifi_password));
 
-    Serial.println(server.arg("ssid"));
-    Serial.println(wifiConf.wifi_ssid);
-
     writeWifiConf();
     save = true;
+
+    debugV(" - SSID: %s", server.arg("ssid"));
+
   }
 
   String message = "";
@@ -485,7 +470,7 @@ void handleWebServerRequest() {
   server.send(200, "text/html", message);
 
   if (save) {
-    Serial.println("Wi-Fi conf saved. Rebooting...");
+    debugV("Wi-Fi conf saved. Rebooting...");
     delay(1000);
     ESP.restart();
   }
@@ -513,33 +498,32 @@ void setUpOverTheAirProgramming() {
     }
 
     // NOTE: if updating FS this would be the place to unmount FS using FS.end()
-    Serial.println("Start updating " + type);
+    debugV("OTA: Start updating %s", type);
   });
 
   ArduinoOTA.onEnd([]() {
-    Serial.println("\nEnd");
+    debugV("OTA: End update");
   });
 
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+    debugV("Progress: %u%%\r", (progress / (total / 100)));
   });
 
   ArduinoOTA.onError([](ota_error_t error) {
-    Serial.printf("Error[%u]: ", error);
+    debugE("Error[%u]: ", error);
     if (error == OTA_AUTH_ERROR) {
-      Serial.println("Auth Failed");
+      debugE(" - Auth Failed\n");
     } else if (error == OTA_BEGIN_ERROR) {
-      Serial.println("Begin Failed");
+      debugE(" - Begin Failed\n");
     } else if (error == OTA_CONNECT_ERROR) {
-      Serial.println("Connect Failed");
+      debugE(" - Connect Failed\n");
     } else if (error == OTA_RECEIVE_ERROR) {
-      Serial.println("Receive Failed");
+      debugE(" - Receive Failed\n");
     } else if (error == OTA_END_ERROR) {
-      Serial.println("End Failed");
+      debugE(" - End Failed\n");
     }
   });
 
   ArduinoOTA.begin();
-  Serial.println("OTA Ready");
-
+  debugV("OTA: Ready");
 }
