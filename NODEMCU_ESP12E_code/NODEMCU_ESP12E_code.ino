@@ -274,7 +274,7 @@ void loop() {
 
 void get_data_from_sheets(HTTPSRedirect * client){
 
-  debugV("Getting data from Google Sheet...");
+  debugI("Getting data from Google Sheet...");
 
   if(client->GET(url, host, false)){ 
     String json_response = client->getResponseBody();
@@ -290,14 +290,14 @@ void get_data_from_sheets(HTTPSRedirect * client){
     max_duty_cycleB = int(doc["max_duty_cycleB"]);
       
     
-    debugV(" - Data >> Target A:\t%f\t\tTarget B:\t%f\t\tDelay:\t%d\t\tDuty A:\t%d\t\tDuty B:\t%d\n", targetTempA, targetTempB, time_delay, max_duty_cycleA, max_duty_cycleB);
+    debugV(" - Data >> Target A:%f\t\tTarget B:%f\t\tDelay:%d\t\tDuty A:%d\t\tDuty B:%d\n", targetTempA, targetTempB, time_delay, max_duty_cycleA, max_duty_cycleB);
 
   }
 }
 
 void post_data_to_sheets(HTTPSRedirect * client){
 
-  debugV("Publishing data into Google Sheets...");  
+  debugI("Publishing data into Google Sheets...");  
 
   // Update counter
   value0 ++;
@@ -322,7 +322,7 @@ void post_data_to_sheets(HTTPSRedirect * client){
 
 void get_data_from_sensors(){
   
-  debugV("Retrieve data from sensor...");
+  debugI("Retrieve data from sensor...");
   
   // Retrieve data from sensor A
   delay(dhtA.getMinimumSamplingPeriod());
@@ -335,13 +335,13 @@ void get_data_from_sensors(){
   temperatureB = dhtB.getTemperature();
 
   // print status
-  debugV(" - Sensor A >> Status:\t%s\t\tHumidity:\t%f\t\tTemperature:\t%f", dhtA.getStatusString(), humidityA, temperatureA);
-  debugV(" - Sensor B >> Status:\t%s\t\tHumidity:\t%f\t\tTemperature:\t%f\n", dhtB.getStatusString(), humidityB, temperatureB);
+  debugV(" - Sensor A >> Status:%s\t\tHumidity:%f\t\tTemperature:%f", dhtA.getStatusString(), humidityA, temperatureA);
+  debugV(" - Sensor B >> Status:%s\t\tHumidity:%f\t\tTemperature:%f\n", dhtB.getStatusString(), humidityB, temperatureB);
 }
 
 void set_heater_power(){
 
-  debugV("Setting PWM signals for heater element power...");
+  debugI("Setting PWM signals for heater element power...");
 
   if (targetTempA > temperatureA) {
     powerA = max_duty_cycleA;
@@ -368,7 +368,7 @@ void set_heater_power(){
 
 void readWifiConf() {
 
-  debugV("Retrieving data from EEPROM...");
+  debugI("Retrieving data from EEPROM...");
 
   // Read wifi conf from flash
   for (int i=0; i<sizeof(wifiConf); i++) {
@@ -385,7 +385,7 @@ void readWifiConf() {
 
 void writeWifiConf() {
 
-  debugV("Writing data into EEPROM...\n");
+  debugI("Writing data into EEPROM...\n");
 
   for (int i=0; i<sizeof(wifiConf); i++) {
     EEPROM.write(i, ((char *)(&wifiConf))[i]);
@@ -394,7 +394,7 @@ void writeWifiConf() {
 }
 
 bool connectToWiFi() {
-  debugV("Connecting to WiFi - SSID:%s", wifiConf.wifi_ssid);
+  debugI("Connecting to WiFi - SSID:%s", wifiConf.wifi_ssid);
 
   WiFi.mode(WIFI_STA); // station mode
   WiFi.begin(wifiConf.wifi_ssid, wifiConf.wifi_password);
@@ -409,7 +409,7 @@ bool connectToWiFi() {
 }
 
 void setUpAccessPoint() {
-    debugV("Setting up access point...");
+    debugI("Setting up access point...");
     debugV(" - SSID: %s\t\t PASS%s", AP_ssid, AP_password);
 
     WiFi.mode(WIFI_AP_STA);
@@ -428,7 +428,7 @@ void setUpWebServer() {
 
 void handleWebServerRequest() {
 
-  debugV("Handling web server request...");
+  debugI("Handling web server request...");
   bool save = false;
 
   if (server.hasArg("ssid") && server.hasArg("password")) {
@@ -498,11 +498,11 @@ void setUpOverTheAirProgramming() {
     }
 
     // NOTE: if updating FS this would be the place to unmount FS using FS.end()
-    debugV("OTA: Start updating %s", type);
+    debugI("OTA: Start updating %s", type);
   });
 
   ArduinoOTA.onEnd([]() {
-    debugV("OTA: End update");
+    debugI("OTA: End update");
   });
 
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
@@ -525,5 +525,5 @@ void setUpOverTheAirProgramming() {
   });
 
   ArduinoOTA.begin();
-  debugV("OTA: Ready");
+  debugI("OTA: Ready");
 }
