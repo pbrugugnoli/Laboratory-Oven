@@ -6,19 +6,61 @@
 
 
 #include <Arduino.h>
+#include <EEPROM.h>
 #include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
 #include "HTTPSRedirect.h"
 #include "DHTesp.h"
 #include <ArduinoJson.h>
+#include <ArduinoOTA.h>
 #include "C:\Users\pbrug\Documents\01. PEB Personal\Credenciais Cloud\SecurityGit\credentials.h"
 
-// Wi fi crendentials
-// const char* ssid     = "xxx"  from crendentials file
-// const char* password = "xxx"  from crendentials file
+// DISABLE DEBUG FOR PRODUCTION
+//#define DEBUG_DISABLED true
 
-// Enter Google Script Deployment ID:
-// const char *GScriptId = "xxx"  from crendentials file
+// SELECT BETWEEN SERIAL or NETWORK DEBUG
+#define REMOTE_DEBUG
 
+#ifdef REMOTE_DEBUG
+  // OVER NETWORK DEBUG
+  #include "RemoteDebug.h"            //https://github.com/JoaoLopesF/RemoteDebug
+  #define REMOTE_INITIAL_LEVEL 1      //(VERBOSE)
+  #define TELNET_PORT 23
+  #define HOST_NAME "remotedebug"
+  #define USE_ARDUINO_OTA true
+  RemoteDebug Debug;
+#else
+  // SERIAL DEBUGGER
+  #include "SerialDebug.h"           // https://github.com/JoaoLopesF/SerialDebug
+  #define DEBUG_INITIAL_LEVEL DEBUG_LEVEL_VERBOSE
+  //#define DEBUG_DISABLE_DEBUGGER true
+  //#define DEBUG_AUTO_FUNC_DISABLED true
+  //#define DEBUG_USE_FLASH_F true   // IMPORTANT FOR ARDUINO - LOW MEMORY
+  //#define DEBUG_MINIMUM true       // IMPORTANT FOR ARDUINO - LOW MEMORY    
+#endif
+
+
+
+// Configuration for fallback access point 
+// if Wi-Fi connection fails.
+IPAddress AP_IP = IPAddress(10,1,1,1);
+IPAddress AP_subnet = IPAddress(255,255,255,0);
+
+// Wi-Fi connection parameters.
+// It will be read from the flash during setup.
+struct WifiConf {
+  char wifi_ssid[50];
+  char wifi_password[50];
+  // Make sure that there is a 0 
+  // that terminatnes the c string
+  // if memory is not initalized yet.
+  char cstr_terminator = 0; // make sure
+};
+WifiConf wifiConf;
+
+// Web server for editing configuration.
+// 80 is the default http port.
+ESP8266WebServer server(80);
 
 // parameters
 float targetTempA = 22;
@@ -66,35 +108,55 @@ float value5 = 0;
 float value6 = 0;
 
 // Declare reading variables
-  float humidityA = 0;
-  float temperatureA = 0;
-  float humidityB = 0;
-  float temperatureB = 0;
+float humidityA = 0;
+float temperatureA = 0;
+float humidityB = 0;
+float temperatureB = 0;
+
+// delay control variables
+float elapsedTime, currentTime, previousTime;
+
+// ------------------------------------------
+// SETUP FUNCTION
+// ------------------------------------------
 
 void setup() {
+  // Serial Communication
+  Serial.begin(9600);        
+  delay(10);
 
-  Serial.println();
-  Serial.println("Booting MCU...");
+  debugA("\n \n Booting MCU - v1.5 in 10 seconds ...\n \n");
+  delay(10000);
+
+  // init EEPROM object 
+  // to read/write wifi configuration.
+  EEPROM.begin(512);
+  readWifiConf();
+
+  if (!connectToWiFi()) {
+    setUpAccessPoint();
+  }
+  setUpWebServer();
+  setUpOverTheAirProgramming();
+
+	// Initialize RemoteDebug
+  #ifdef REMOTE_DEBUG  
+    Debug.begin(HOST_NAME, TELNET_PORT, REMOTE_INITIAL_LEVEL); // Initialize the WiFi server
+    Debug.setResetCmdEnabled(true); // Enable the reset command
+    Debug.showProfiler(true); // Profiler (Good to measure times, to optimize codes)
+    Debug.showColors(true); // Colors
+  #endif
 
   // Onboard LED
   pinMode(LED_BUILTIN, OUTPUT);  // GPIO 16
 
-  // Serial Communication
-  Serial.begin(9600);        
-  delay(10);
-  Serial.println('\n');
-
-  // Set Sensor A
-  Serial.println();
-  Serial.println("Setting up sensor A");
+  // Set Sensor A and B
+  debugV("Setting up sensors...");
   dhtA.setup(DHTpin1, DHTesp::DHT11); //for DHT11 Connect DHT sensor to GPIO 14
-  
-  // Set Sensor B
-  Serial.println();
-  Serial.println("Setting up sensor B");
   dhtB.setup(DHTpin2, DHTesp::DHT11); //for DHT11 Connect DHT sensor to GPIO 12
 
   // Setup L298N driver pins
+  debugV("Setting up L298N pins...");
   pinMode(ENA, OUTPUT);
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT); 
@@ -107,63 +169,117 @@ void setup() {
   digitalWrite(IN3, LOW);
   digitalWrite(IN4, HIGH);
 
-  // Connect to WiFi
-  WiFi.begin(ssid, password);             
-  Serial.print("Connecting to ");
-  Serial.print(ssid); Serial.println(" ...");
-
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(1000);
-    Serial.print(".");
-  }
-  Serial.println('\n');
-  Serial.println("Connection established!");  
-  Serial.print("IP address:\t");
-  Serial.println(WiFi.localIP());
-
   // Use HTTPSRedirect class to create a new TLS connection
+  debugV("Connecting to %s", host);
+
   client = new HTTPSRedirect(httpsPort);
   client->setInsecure();
   client->setPrintResponseBody(true);
   client->setContentTypeHeader("application/json");
   
-  Serial.print("Connecting to ");
-  Serial.println(host);
-
-  // Try to connect for a maximum of 5 times
+  // Try to connect for a maximum of 10 times
   bool flag = false;
   for (int i=0; i<10; i++){ 
     int retval = client->connect(host, httpsPort);
     if (retval == 1){
        flag = true;
-       Serial.println("Connected");
+       debugV(" - Connected successfully");
        break;
     }
     else
-      Serial.println("Connection failed. Retrying...");
+      debugI("Connection failed. Retrying...");
   }
   if (!flag){
-    Serial.print("Could not connect to server: ");
-    Serial.println(host);
+    debugE("Could not connect to %s", host);
     return;
   }
-  else{
-    // do stuff here if publish was not successful
-    Serial.println("Error while connecting");
-  }
  
+  // GET data from google sheet - initialize target variables
+  get_data_from_sheets(client);
+  previousTime = millis(); 
+
   // clean up
   delete client;    // delete HTTPSRedirect object
   client = nullptr; // delete HTTPSRedirect object
 
 }
 
+// ------------------------------------------
+// MAIN LOOP
+// ------------------------------------------
+
+void loop() {
+
+  // Give processing time for ArduinoOTA.
+  ArduinoOTA.handle();
+
+  // Give processing time for the webserver.
+  server.handleClient();
+
+  // Create HTTP client
+  static bool flag = false;
+  if (!flag){
+    client = new HTTPSRedirect(httpsPort);
+    client->setInsecure();
+    flag = true;
+    client->setPrintResponseBody(true);
+    client->setContentTypeHeader("application/json");
+  }
+  if (client != nullptr){
+    if (!client->connected()){
+      client->connect(host, httpsPort);
+      // it seems to me that a check if the connection is ok
+    }
+  }
+  else{
+    debugE("Error creating HTTPSRedirect object!");
+  }
+
+  // After each time_delay log data and retrive parameters from google sheet
+  currentTime = millis();      // get current time
+  elapsedTime = (currentTime - previousTime) / 1000; 
+
+  if (elapsedTime > time_delay) {
+    // Turn on LED to indicate processing
+    digitalWrite(LED_BUILTIN, LOW);  
+
+    // Get data from sensors
+    get_data_from_sensors();
+
+    // very dummy controller
+    set_heater_power();
+    
+    // GET data from google sheet
+    get_data_from_sheets(client);
+
+    // POST data into google sheet 
+    post_data_to_sheets(client);
+
+    // Turn off LED
+    digitalWrite(LED_BUILTIN, HIGH);  
+
+    previousTime = currentTime;      // the last "trigger time" is stored 
+  }
+
+  // RemoteDebug handle
+  debugHandle();
+  
+  // a delay between each cycle - to be evaluated .. if it is really required  
+  delay(500);
+}
+
+// -------------------------------------------------------------------
+// MAIN LABORATORY OVEN FUNCTIONS (to be replace for a class+methods)
+// -------------------------------------------------------------------
+
 void get_data_from_sheets(HTTPSRedirect * client){
-  Serial.println("Getting data...");
-  if(client->GET(url, host)){ 
-    //String json_response = client->getResponseBody();
+
+  debugI("Getting data from Google Sheet...");
+
+  if(client->GET(url, host, false)){ 
     String json_response = client->getResponseBody();
 
+ // Decode JSON/Extract values
     DynamicJsonDocument doc(1024);
     deserializeJson(doc, json_response);  
 
@@ -173,21 +289,16 @@ void get_data_from_sheets(HTTPSRedirect * client){
     max_duty_cycleA = int(doc["max_duty_cycleA"]);
     max_duty_cycleB = int(doc["max_duty_cycleB"]);
       
-    // Decode JSON/Extract values
-    Serial.print("Target A: \t");
-    Serial.println(targetTempA);
-    Serial.print("Target b: \t");
-    Serial.println(targetTempB);
-    Serial.print("Delay: \t");
-    Serial.println(time_delay);
-    Serial.print("Max Duty Cycle A: \t");
-    Serial.println(max_duty_cycleA);
-    Serial.print("Max Duty Cycle B: \t");
-    Serial.println(max_duty_cycleB);
+    
+    debugV(" - Data >> Target A:%f\t\tTarget B:%f\t\tDelay:%d\t\tDuty A:%d\t\tDuty B:%d\n", targetTempA, targetTempB, time_delay, max_duty_cycleA, max_duty_cycleB);
+
   }
 }
 
 void post_data_to_sheets(HTTPSRedirect * client){
+
+  debugI("Publishing data into Google Sheets...");  
+
   // Update counter
   value0 ++;
   value1 = temperatureA;
@@ -200,19 +311,19 @@ void post_data_to_sheets(HTTPSRedirect * client){
   // prepare payload
   payload = payload_base + "\"" + value0 + "," + value1+ "," + value2 + "," + value3 + "," + value4 + "," + value5 + "," + value6 + "\"}";
   
-  // Publish data to Google Sheets
-  Serial.println("Publishing data...");
-  Serial.println(payload);
-  if(client->POST(url, host, payload)){ 
-    // do stuff here if publish was successful
+  if(client->POST(url, host, payload, false)){ 
+    // Published data to Google Sheets
+    debugV(" - Payload >> %s\n", payload.c_str());
   }
   else{
-    // do stuff here if publish was not successful
-    Serial.println("Error while connecting");
+    debugE(" - Error while connecting\n");
   }
 }
 
 void get_data_from_sensors(){
+  
+  debugI("Retrieve data from sensor...");
+  
   // Retrieve data from sensor A
   delay(dhtA.getMinimumSamplingPeriod());
   humidityA = dhtA.getHumidity();
@@ -224,22 +335,14 @@ void get_data_from_sensors(){
   temperatureB = dhtB.getTemperature();
 
   // print status
-  Serial.println("Sensor A");
-  Serial.print(dhtA.getStatusString());
-  Serial.print("\t");
-  Serial.print(humidityA, 1);
-  Serial.print("\t\t");
-  Serial.print(temperatureA, 1);
-
-  Serial.println("Sensor B");
-  Serial.print(dhtB.getStatusString());
-  Serial.print("\t");
-  Serial.print(humidityB, 1);
-  Serial.print("\t\t");
-  Serial.print(temperatureB, 1);
+  debugV(" - Sensor A >> Status:%s\t\tHumidity:%f\t\tTemperature:%f", dhtA.getStatusString(), humidityA, temperatureA);
+  debugV(" - Sensor B >> Status:%s\t\tHumidity:%f\t\tTemperature:%f\n", dhtB.getStatusString(), humidityB, temperatureB);
 }
 
 void set_heater_power(){
+
+  debugI("Setting PWM signals for heater element power...");
+
   if (targetTempA > temperatureA) {
     powerA = max_duty_cycleA;
   } else {
@@ -255,52 +358,172 @@ void set_heater_power(){
   analogWrite(ENB, powerB);
 
   // print status
-  Serial.print("New PowerA: ");
-  Serial.println(powerA, 0);
-  Serial.print("New PowerB: ");
-  Serial.println(powerB, 0);
+  debugV(" - Power >> Heater A:%d\t\tHeater B:%d\n", powerA, powerB);
 }
 
-void loop() {
-  // Turn on LED
-  digitalWrite(LED_BUILTIN, LOW);  
 
-  // Create HTTP client
-  static bool flag = false;
-  if (!flag){
-    client = new HTTPSRedirect(httpsPort);
-    client->setInsecure();
-    flag = true;
-    client->setPrintResponseBody(true);
-    client->setContentTypeHeader("application/json");
+// -------------------------
+// OTA CODE AND SAFEGUARDS
+// -------------------------
+
+void readWifiConf() {
+
+  debugI("Retrieving data from EEPROM...");
+
+  // Read wifi conf from flash
+  for (int i=0; i<sizeof(wifiConf); i++) {
+    ((char *)(&wifiConf))[i] = char(EEPROM.read(i));
   }
-  if (client != nullptr){
-    if (!client->connected()){
-      client->connect(host, httpsPort);
+  // Make sure that there is a 0 
+  // that terminatnes the c string
+  // if memory is not initalized yet.
+  wifiConf.cstr_terminator = 0;
+  
+  debugV(" - EEPROM >> SSID: %s \t PASS: *******\n");
+}
+
+
+void writeWifiConf() {
+
+  debugI("Writing data into EEPROM...\n");
+
+  for (int i=0; i<sizeof(wifiConf); i++) {
+    EEPROM.write(i, ((char *)(&wifiConf))[i]);
+  }
+  EEPROM.commit();
+}
+
+bool connectToWiFi() {
+  debugI("Connecting to WiFi - SSID:%s", wifiConf.wifi_ssid);
+
+  WiFi.mode(WIFI_STA); // station mode
+  WiFi.begin(wifiConf.wifi_ssid, wifiConf.wifi_password);
+
+  if (WiFi.waitForConnectResult() == WL_CONNECTED) {
+    debugV(" - Connected with IP: %s\n", WiFi.localIP());
+    return true;
+  } else {
+    debugE(" - Connection to WiFi Failed!\n");
+    return false;
+  }
+}
+
+void setUpAccessPoint() {
+    debugI("Setting up access point...");
+    debugV(" - SSID: %s\t\t PASS%s", AP_ssid, AP_password);
+
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.softAPConfig(AP_IP, AP_IP, AP_subnet);
+    if (WiFi.softAP(AP_ssid, AP_password)) {
+      debugV(" - Access point set to IP:%s", WiFi.softAPIP());
+    } else {
+      debugE("Setting up access point failed!");
     }
+}
+
+void setUpWebServer() {
+  server.on("/", handleWebServerRequest);
+  server.begin();
+}
+
+void handleWebServerRequest() {
+
+  debugI("Handling web server request...");
+  bool save = false;
+
+  if (server.hasArg("ssid") && server.hasArg("password")) {
+    server.arg("ssid").toCharArray(
+      wifiConf.wifi_ssid,
+      sizeof(wifiConf.wifi_ssid));
+    server.arg("password").toCharArray(
+      wifiConf.wifi_password,
+      sizeof(wifiConf.wifi_password));
+
+    writeWifiConf();
+    save = true;
+
+    debugV(" - SSID: %s", server.arg("ssid"));
+
   }
-  else{
-    Serial.println("Error creating client object!");
+
+  String message = "";
+  message += "<!DOCTYPE html>";
+  message += "<html>";
+  message += "<head>";
+  message += "<title>ESP8266 conf</title>";
+  message += "</head>";
+  message += "<body>";
+  if (save) {
+    message += "<div>Saved! Rebooting...</div>";
+  } else {
+    message += "<h1>Wi-Fi conf</h1>";
+    message += "<form action='/' method='POST'>";
+    message += "<div>SSID:</div>";
+    message += "<div><input type='text' name='ssid' value='" + String(wifiConf.wifi_ssid) + "'/></div>";
+    message += "<div>Password:</div>";
+    message += "<div><input type='password' name='password' value='" + String(wifiConf.wifi_password) + "'/></div>";
+    message += "<div><input type='submit' value='Save'/></div>";
+    message += "</form>";
   }
+  message += "</body>";
+  message += "</html>";
+  server.send(200, "text/html", message);
 
-  // GET data from google sheet
-  get_data_from_sheets(client);
+  if (save) {
+    debugV("Wi-Fi conf saved. Rebooting...");
+    delay(1000);
+    ESP.restart();
+  }
+}
 
-  // Get data from sensors
-  get_data_from_sensors();
+void setUpOverTheAirProgramming() {
 
-  // very dummy controller
-  set_heater_power();
+  // Change OTA port. 
+  // Default: 8266
+  ArduinoOTA.setPort(8266);
 
+  // Change the name of how it is going to show up in Arduino IDE.
+  ArduinoOTA.setHostname("PEB_NODEMCU_ESP12E");
 
-  // POST data into google sheet 
-  // Create json object string to send to Google Sheets
-  post_data_to_sheets(client);
+  // Re-programming passowrd. 
+  // ArduinoOTA.setPassword(OTA_password);
+  ArduinoOTA.setPasswordHash(OTA_password_hash);
 
+  ArduinoOTA.onStart([]() {
+    String type;
+    if (ArduinoOTA.getCommand() == U_FLASH) {
+      type = "sketch";
+    } else {  // U_FS
+      type = "filesystem";
+    }
 
-  // Turn off LED
-  digitalWrite(LED_BUILTIN, HIGH);  
+    // NOTE: if updating FS this would be the place to unmount FS using FS.end()
+    debugI("OTA: Start updating %s", type);
+  });
 
-  // a delay of several seconds is required before publishing again    
-  delay(time_delay);
+  ArduinoOTA.onEnd([]() {
+    debugI("OTA: End update");
+  });
+
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    debugV("Progress: %u%%\r", (progress / (total / 100)));
+  });
+
+  ArduinoOTA.onError([](ota_error_t error) {
+    debugE("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) {
+      debugE(" - Auth Failed\n");
+    } else if (error == OTA_BEGIN_ERROR) {
+      debugE(" - Begin Failed\n");
+    } else if (error == OTA_CONNECT_ERROR) {
+      debugE(" - Connect Failed\n");
+    } else if (error == OTA_RECEIVE_ERROR) {
+      debugE(" - Receive Failed\n");
+    } else if (error == OTA_END_ERROR) {
+      debugE(" - End Failed\n");
+    }
+  });
+
+  ArduinoOTA.begin();
+  debugI("OTA: Ready");
 }
