@@ -68,6 +68,9 @@ float targetTempB = 22;
 int max_duty_cycleA = 127;  // =50% ->  [12V (power supply) - 2V (L298N voltage drop)] * max_duty_cycle = 5V
 int max_duty_cycleB = 127;  // =50% ->  [12V (power supply) - 2V (L298N voltage drop)] * max_duty_cycle = 5V
 int time_delay = 5000;
+float Kp = 1;
+float Kd = 0;
+float Ki = 0;
 
 // Temperature Sensors
 #define DHTpin1 14   //D5 of NodeMCU is GPIO14
@@ -106,12 +109,14 @@ float value3 = 0;
 float value4 = 0;
 float value5 = 0;
 float value6 = 0;
+const char* value7 = "...";
 
 // Declare reading variables
 float humidityA = 0;
 float temperatureA = 0;
 float humidityB = 0;
 float temperatureB = 0;
+int minsampleperiod = 2000;
 
 // delay control variables
 float elapsedTime, currentTime, previousTime;
@@ -154,6 +159,7 @@ void setup() {
   debugV("Setting up sensors...");
   dhtA.setup(DHTpin1, DHTesp::DHT11); //for DHT11 Connect DHT sensor to GPIO 14
   dhtB.setup(DHTpin2, DHTesp::DHT11); //for DHT11 Connect DHT sensor to GPIO 12
+  minsampleperiod = max(dhtA.getMinimumSamplingPeriod(), dhtB.getMinimumSamplingPeriod())/1000;
 
   // Setup L298N driver pins
   debugV("Setting up L298N pins...");
@@ -239,9 +245,9 @@ void loop() {
   currentTime = millis();      // get current time
   elapsedTime = (currentTime - previousTime) / 1000; 
 
-  if (elapsedTime > time_delay) {
+  if (elapsedTime > max(time_delay, minsampleperiod)) {
     // Turn on LED to indicate processing
-    digitalWrite(LED_BUILTIN, LOW);  
+    //digitalWrite(LED_BUILTIN, LOW);  
 
     // Get data from sensors
     get_data_from_sensors();
@@ -256,7 +262,7 @@ void loop() {
     post_data_to_sheets(client);
 
     // Turn off LED
-    digitalWrite(LED_BUILTIN, HIGH);  
+    //digitalWrite(LED_BUILTIN, HIGH);  
 
     previousTime = currentTime;      // the last "trigger time" is stored 
   }
@@ -288,9 +294,12 @@ void get_data_from_sheets(HTTPSRedirect * client){
     time_delay = doc["delay"];
     max_duty_cycleA = int(doc["max_duty_cycleA"]);
     max_duty_cycleB = int(doc["max_duty_cycleB"]);
-      
+    Kp = doc["Kp"];
+    Kd = doc["Kd"];
+    Ki = doc["Ki"];
     
-    debugV(" - Data >> Target A:%f\t\tTarget B:%f\t\tDelay:%d\t\tDuty A:%d\t\tDuty B:%d\n", targetTempA, targetTempB, time_delay, max_duty_cycleA, max_duty_cycleB);
+    debugV(" - Data >> Target A:%f\tTarget B:%f\tDelay:%d\tDuty A:%d\tDuty B:%d\n", targetTempA, targetTempB, time_delay, max_duty_cycleA, max_duty_cycleB);
+    debugV(" - Data >> Kp:%f\tKd:%f\tKi:%f\n", Kp, Kd, Ki);
 
   }
 }
@@ -307,9 +316,10 @@ void post_data_to_sheets(HTTPSRedirect * client){
   value4 = powerB/max_duty_cycleB;
   value5 = targetTempA;
   value6 = targetTempB;
+  // value 7
 
   // prepare payload
-  payload = payload_base + "\"" + value0 + "," + value1+ "," + value2 + "," + value3 + "," + value4 + "," + value5 + "," + value6 + "\"}";
+  payload = payload_base + "\"" + value0 + "," + value1+ "," + value2 + "," + value3 + "," + value4 + "," + value5 + "," + value6 + "," + value7 +"\"}";
   
   if(client->POST(url, host, payload, false)){ 
     // Published data to Google Sheets
@@ -325,18 +335,17 @@ void get_data_from_sensors(){
   debugI("Retrieve data from sensor...");
   
   // Retrieve data from sensor A
-  delay(dhtA.getMinimumSamplingPeriod());
   humidityA = dhtA.getHumidity();
-  temperatureA = dhtA.getTemperature();
+  temperatureA = dhtA.getTemperature() - 1;
+
 
   // Retrieve data from sensor B
-  delay(dhtB.getMinimumSamplingPeriod());
   humidityB = dhtB.getHumidity();
   temperatureB = dhtB.getTemperature();
 
   // print status
-  debugV(" - Sensor A >> Status:%s\t\tHumidity:%f\t\tTemperature:%f", dhtA.getStatusString(), humidityA, temperatureA);
-  debugV(" - Sensor B >> Status:%s\t\tHumidity:%f\t\tTemperature:%f\n", dhtB.getStatusString(), humidityB, temperatureB);
+  debugV(" - Sensor A >> Status:%s\tHumidity:%f\tTemperature:%f",  dhtA.getStatusString(), humidityA, temperatureA);
+  debugV(" - Sensor B >> Status:%s\tHumidity:%f\tTemperature:%f\n",  dhtB.getStatusString(), humidityB, temperatureB);
 }
 
 void set_heater_power(){
@@ -358,7 +367,7 @@ void set_heater_power(){
   analogWrite(ENB, powerB);
 
   // print status
-  debugV(" - Power >> Heater A:%d\t\tHeater B:%d\n", powerA, powerB);
+  debugV(" - Power >> Heater A:%d\tHeater B:%d\n", powerA, powerB);
 }
 
 

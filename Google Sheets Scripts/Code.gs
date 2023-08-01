@@ -30,7 +30,7 @@ function doPost(e) {
     var dataArr = parsedData.values.split(","); // creates an array of the values to publish 
          
     var date_now = Utilities.formatDate(new Date(), "America/Sao_Paulo", "yyyy/MM/dd"); // gets the current date
-    var time_now = Utilities.formatDate(new Date(), "America/Sao_Paulo", "hh:mm:ss a"); // gets the current time
+    var time_now = Utilities.formatDate(new Date(), "America/Sao_Paulo", "yyyy/MM/dd hh:mm:ss a"); // gets the current timestamp
     
     var value0 = dataArr [0]; // value0 from Arduino code
     var value1 = dataArr [1]; // value1 from Arduino code
@@ -39,6 +39,7 @@ function doPost(e) {
     var value4 = dataArr [4]; // value4 from Arduino code
     var value5 = dataArr [5]; // value5 from Arduino code
     var value6 = dataArr [6]; // value6 from Arduino code
+    var value7 = dataArr [7]; // value7 - obs values from Arduino code
     
     // read and execute command from the "payload_base" string specified in Arduino code
     switch (parsedData.command) {
@@ -59,7 +60,8 @@ function doPost(e) {
          sheet.getRange('G2').setValue(value4);   // publish value4 from Arduino code to cell G2
          sheet.getRange('H2').setValue(value5);   // publish value5 from Arduino code to cell H2
          sheet.getRange('I2').setValue(value6);   // publish value6 from Arduino code to cell I2
-         
+         sheet.getRange('J2').setValue(value7);   // publish value7 from Arduino code to cell J2
+
          str = "Success"; // string to return back to Arduino serial console
          SpreadsheetApp.flush();
          break;
@@ -75,9 +77,10 @@ function doPost(e) {
          publish_array [4] = value2;   // add value2 from Arduino code to position 4 in publish_array
          publish_array [5] = value3;   // add value3 from Arduino code to position 5 in publish_array
          publish_array [6] = value4;   // add value4 from Arduino code to position 6 in publish_array
-         publish_array [7] = value5;   // add value4 from Arduino code to position 6 in publish_array
-         publish_array [8] = value6;   // add value4 from Arduino code to position 7 in publish_array
-         
+         publish_array [7] = value5;   // add value5 from Arduino code to position 7 in publish_array
+         publish_array [8] = value6;   // add value6 from Arduino code to position 8 in publish_array
+         publish_array [9] = value7;   // add value7 from Arduino code to position 9 in publish_array
+        
          sheet.appendRow(publish_array); // publish data in publish_array after the last row of data in the sheet
          
          str = "Success"; // string to return back to Arduino serial console
@@ -97,18 +100,24 @@ function doPost(e) {
 
 function doGet(e) {
   var sheet = SS.getSheetByName("Parameters"); // sheet name where the parameters ares stored
-  var targetA = sheet.getRange('B1').getValue();
-  var targetB = sheet.getRange('B2').getValue();
-  var delay   = sheet.getRange('B3').getValue();
-  var max_duty_cycleA = sheet.getRange('B4').getValue();
-  var max_duty_cycleB = sheet.getRange('B5').getValue();
+  var targetA = sheet.getRange('param_targetA').getValue();
+  var targetB = sheet.getRange('param_targetB').getValue();
+  var delay   = sheet.getRange('param_delay').getValue();
+  var max_duty_cycleA = sheet.getRange('param_maxdutyA').getValue();
+  var max_duty_cycleB = sheet.getRange('param_maxdutyB').getValue();
+  var Kp = sheet.getRange('param_Kp').getValue();
+  var Kd = sheet.getRange('param_Kd').getValue();
+  var Ki = sheet.getRange('param_Ki').getValue();
 
    var response = {
     "targetA": targetA,
     "targetB": targetB,
     "delay": delay,
     "max_duty_cycleA": max_duty_cycleA,
-    "max_duty_cycleB": max_duty_cycleB
+    "max_duty_cycleB": max_duty_cycleB,
+    "Kp": Kp,
+    "Kd": Kd,
+    "Ki": Ki
   };
   
   return ContentService.createTextOutput(JSON.stringify(response)).setMimeType(ContentService.MimeType.JSON);
