@@ -109,7 +109,7 @@ float value3 = 0;
 float value4 = 0;
 float value5 = 0;
 float value6 = 0;
-const char* value7 = "...";
+String value7 = "";
 
 // Declare reading variables
 float humidityA = 0;
@@ -117,6 +117,10 @@ float temperatureA = 0;
 float humidityB = 0;
 float temperatureB = 0;
 int minsampleperiod = 2000;
+
+TempAndHumidity dhtValuesA;
+TempAndHumidity dhtValuesB;
+String sensorError = "";
 
 // delay control variables
 float elapsedTime, currentTime, previousTime;
@@ -316,7 +320,7 @@ void post_data_to_sheets(HTTPSRedirect * client){
   value4 = powerB/max_duty_cycleB;
   value5 = targetTempA;
   value6 = targetTempB;
-  // value 7
+  value7 = sensorError;
 
   // prepare payload
   payload = payload_base + "\"" + value0 + "," + value1+ "," + value2 + "," + value3 + "," + value4 + "," + value5 + "," + value6 + "," + value7 +"\"}";
@@ -335,13 +339,38 @@ void get_data_from_sensors(){
   debugI("Retrieve data from sensor...");
   
   // Retrieve data from sensor A
-  humidityA = dhtA.getHumidity();
-  temperatureA = dhtA.getTemperature() - 1;
+  sensorError = "...";
+  int counter = 0;
 
+  while (true) {
+    dhtValuesA = dhtA.getTempAndHumidity();
+    if (dhtA.getStatus() == 0){
+      humidityA = dhtValuesA.humidity;
+      temperatureA = dhtValuesA.temperature - 1;
+      break;
+    }
+    if (counter++ == 3){
+      sensorError = sensorError + " ErrorA";// + dhtA.getStatusString() + "\t";
+      break;
+    }
+    delay(dhtA.getMinimumSamplingPeriod());
+  };
 
   // Retrieve data from sensor B
-  humidityB = dhtB.getHumidity();
-  temperatureB = dhtB.getTemperature();
+  counter = 0;
+  while (true) {
+    dhtValuesB = dhtB.getTempAndHumidity();
+    if (dhtB.getStatus() == 0){
+      humidityB = dhtValuesB.humidity;
+      temperatureB = dhtValuesB.temperature;
+      break;
+    }
+    if (counter++ == 3){
+      sensorError = sensorError + " ErrorB"; // + dhtB.getStatusString() + "\t";
+      break;
+    }
+    delay(dhtB.getMinimumSamplingPeriod());
+  }
 
   // print status
   debugV(" - Sensor A >> Status:%s\tHumidity:%f\tTemperature:%f",  dhtA.getStatusString(), humidityA, temperatureA);
