@@ -142,10 +142,9 @@ void setup() {
   // Serial Communication
   Serial.begin(9600);        
   delay(10);
-
-  debugA("\n \n Booting MCU - v1.5 in 10 seconds ...\n \n");
-  delay(10000);
-
+  
+  debugA("\n \n Booting MCU - v1.6 ...\n \n");
+  
   // init EEPROM object 
   // to read/write wifi configuration.
   EEPROM.begin(512);
@@ -336,7 +335,7 @@ void get_data_from_sheets(HTTPSRedirect * client){
     }
 
 
-    debugV(" - Data >> Target A:%f\tTarget B:%f\tDelay:%d\tDuty A:%d\tDuty B:%d\n", targetTempA, targetTempB, time_delay, max_duty_cycleA, max_duty_cycleB);
+    debugV(" - Data >> Target A:%f\tTarget B:%f\tDelay:%d\tDuty A:%d\tDuty B:%d", targetTempA, targetTempB, time_delay, max_duty_cycleA, max_duty_cycleB);
     debugV(" - Data >> A(Kp, Ki, Kd):(%f , %f, %f)\tB(Kp, Ki, Kd):(%f , %f, %f)\n", Kp_A, Ki_A, Kd_A, Kp_B, Ki_B, Kd_B);
 
   }
@@ -439,13 +438,15 @@ void update_PID_settings(){
 
   if (flagChangeKA) {
     myPIDA.SetTunings(Kp_A, Ki_A, Kd_A);
-    debugV("PDI parameters for A were updated to (Kp, Ki, Kd) = (%f, $f, $f)", Kp_A, Ki_A, Kd_A);
+    debugV("PDI parameters for A were updated to (Kp, Ki, Kd) = (%f, %f, %f)", Kp_A, Ki_A, Kd_A);
   }
   if (flagChangeKB) {
     myPIDB.SetTunings(Kp_B, Ki_B, Kd_B);
-    debugV("PDI parameters for B were updated to (Kp, Ki, Kd) = (%f, $f, $f)", Kp_B, Ki_B, Kd_B);
+    debugV("PDI parameters for B were updated to (Kp, Ki, Kd) = (%f, %f, %f)", Kp_B, Ki_B, Kd_B);
   }
-
+  if (flagChangeKA || flagChangeKB) {
+  debugV("\n");
+  }  
 }
 
 void set_heater_power_with_PID(){
