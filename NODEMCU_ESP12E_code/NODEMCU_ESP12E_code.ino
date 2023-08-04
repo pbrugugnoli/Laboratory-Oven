@@ -14,6 +14,7 @@
 #include <ArduinoJson.h>
 #include <ArduinoOTA.h>
 #include "C:\Users\pbrug\Documents\01. PEB Personal\Credenciais Cloud\SecurityGit\credentials.h"
+#include <PID_v1.h>
 
 // DISABLE DEBUG FOR PRODUCTION
 //#define DEBUG_DISABLED true
@@ -62,15 +63,6 @@ WifiConf wifiConf;
 // 80 is the default http port.
 ESP8266WebServer server(80);
 
-// parameters
-float targetTempA = 22;
-float targetTempB = 22;
-int max_duty_cycleA = 127;  // =50% ->  [12V (power supply) - 2V (L298N voltage drop)] * max_duty_cycle = 5V
-int max_duty_cycleB = 127;  // =50% ->  [12V (power supply) - 2V (L298N voltage drop)] * max_duty_cycle = 5V
-int time_delay = 5000;
-float Kp = 1;
-float Kd = 0;
-float Ki = 0;
 
 // Temperature Sensors
 #define DHTpin1 14   //D5 of NodeMCU is GPIO14
@@ -86,9 +78,6 @@ int IN2 = D2;
 int ENB = D8;
 int IN3 = D3;
 int IN4 = D4;
-
-int powerA = 0;
-int powerB = 0;
 
 // Enter command (insert_row or append_row) and your Google Sheets sheet name (default is Sheet1):
 String payload_base =  "{\"command\": \"insert_row\", \"sheet_name\": \"DataLog\", \"values\": ";
@@ -112,11 +101,11 @@ float value6 = 0;
 String value7 = "";
 
 // Declare reading variables
-float humidityA = 0;
-float temperatureA = 0;
-float humidityB = 0;
-float temperatureB = 0;
-int minsampleperiod = 2000;
+double humidityA = 0;
+double temperatureA = 0;
+double humidityB = 0;
+double temperatureB = 0;
+int minsampleperiod = 2000;     // default min sample period for DHT22 in ms
 
 TempAndHumidity dhtValuesA;
 TempAndHumidity dhtValuesB;
@@ -124,6 +113,26 @@ String sensorError = "";
 
 // delay control variables
 float elapsedTime, currentTime, previousTime;
+
+// controlling parameters
+double powerA = 0;
+double powerB = 0;
+double targetTempA = 22;
+double targetTempB = 22;
+int max_duty_cycleA = 127;  // =50% ->  [12V (power supply) - 2V (L298N voltage drop)] * max_duty_cycle = 5V
+int max_duty_cycleB = 127;  // =50% ->  [12V (power supply) - 2V (L298N voltage drop)] * max_duty_cycle = 5V
+int time_delay = 5000;
+double Kp_A = 1, Kp_B = 1;
+double Kd_A = 0, Kd_B = 0;
+double Ki_A = 0, Ki_B = 0;
+bool flagChangeKA = false;
+bool flagChangeKB = false;
+bool flagChangeDutyA = false;
+bool flagChangeDutyB = false;
+const int sampleRate = 2000;       // Time interval of the PID control in millisenconds
+
+PID myPIDA (&temperatureA, &powerA, &targetTempA, Kp_A, Ki_A, Kd_A, DIRECT);
+PID myPIDB (&temperatureB, &powerB, &targetTempB, Kp_B, Ki_B, Kd_B, DIRECT);
 
 // ------------------------------------------
 // SETUP FUNCTION
@@ -163,7 +172,7 @@ void setup() {
   debugV("Setting up sensors...");
   dhtA.setup(DHTpin1, DHTesp::DHT11); //for DHT11 Connect DHT sensor to GPIO 14
   dhtB.setup(DHTpin2, DHTesp::DHT11); //for DHT11 Connect DHT sensor to GPIO 12
-  minsampleperiod = max(dhtA.getMinimumSamplingPeriod(), dhtB.getMinimumSamplingPeriod())/1000;
+  minsampleperiod = max(dhtA.getMinimumSamplingPeriod(), dhtB.getMinimumSamplingPeriod());
 
   // Setup L298N driver pins
   debugV("Setting up L298N pins...");
@@ -208,6 +217,15 @@ void setup() {
   get_data_from_sheets(client);
   previousTime = millis(); 
 
+  // Setting up PID controllers
+  myPIDA.SetMode(AUTOMATIC);
+  myPIDB.SetMode(AUTOMATIC);
+  myPIDA.SetSampleTime(sampleRate); // Assign the sample rate of the control
+  myPIDB.SetSampleTime(sampleRate); // Assign the sample rate of the control
+  myPIDA.SetOutputLimits(0.0, 1.0);
+  myPIDB.SetOutputLimits(0.0, 1.0);
+  update_PID_settings();
+
   // clean up
   delete client;    // delete HTTPSRedirect object
   client = nullptr; // delete HTTPSRedirect object
@@ -245,22 +263,18 @@ void loop() {
     debugE("Error creating HTTPSRedirect object!");
   }
 
-  // After each time_delay log data and retrive parameters from google sheet
-  currentTime = millis();      // get current time
-  elapsedTime = (currentTime - previousTime) / 1000; 
-
-  if (elapsedTime > max(time_delay, minsampleperiod)) {
+  // After each time_delay log retrieve parameters from google sheet and write log
+  currentTime = millis();                           // get current time
+  elapsedTime = (currentTime - previousTime)/1000;  // in seconds
+  if (elapsedTime > time_delay) {
     // Turn on LED to indicate processing
-    //digitalWrite(LED_BUILTIN, LOW);  
-
-    // Get data from sensors
-    get_data_from_sensors();
-
-    // very dummy controller
-    set_heater_power();
+    //digitalWrite(LED_BUILTIN, LOW);  it mess up with PWM signal !?!?!
     
     // GET data from google sheet
     get_data_from_sheets(client);
+
+    // Update PID
+    update_PID_settings();
 
     // POST data into google sheet 
     post_data_to_sheets(client);
@@ -271,11 +285,15 @@ void loop() {
     previousTime = currentTime;      // the last "trigger time" is stored 
   }
 
+  // Perform controlling activities - Get data from sensors and update heater power
+  get_data_from_sensors();
+  set_heater_power_with_PID();
+  
   // RemoteDebug handle
   debugHandle();
   
-  // a delay between each cycle - to be evaluated .. if it is really required  
-  delay(500);
+  // a delay due to DHT sensor limitations
+  delay(minsampleperiod);
 }
 
 // -------------------------------------------------------------------
@@ -296,14 +314,30 @@ void get_data_from_sheets(HTTPSRedirect * client){
     targetTempA = doc["targetA"];
     targetTempB = doc["targetB"];
     time_delay = doc["delay"];
-    max_duty_cycleA = int(doc["max_duty_cycleA"]);
-    max_duty_cycleB = int(doc["max_duty_cycleB"]);
-    Kp = doc["Kp"];
-    Kd = doc["Kd"];
-    Ki = doc["Ki"];
-    
+    max_duty_cycleA = (int) doc["max_duty_cycleA"];
+    max_duty_cycleB = (int) doc["max_duty_cycleB"];
+
+    if ( Kp_A != doc["Kp_A"] ||  Kd_A != doc["Kd_A"] || Ki_A != doc["Ki_A"]){
+      flagChangeKA = true;
+      Kp_A = doc["Kp_A"];
+      Kd_A = doc["Kd_A"];
+      Ki_A = doc["Ki_A"];
+    } else {
+      flagChangeKA = false;
+    }
+
+    if ( Kp_B != doc["Kp_B"] ||  Kd_B != doc["Kd_B"] || Ki_B != doc["Ki_B"]){
+      flagChangeKB = true;
+      Kp_B = doc["Kp_B"];
+      Kd_B = doc["Kd_B"];
+      Ki_B = doc["Ki_B"];
+    } else {
+      flagChangeKB = false;
+    }
+
+
     debugV(" - Data >> Target A:%f\tTarget B:%f\tDelay:%d\tDuty A:%d\tDuty B:%d\n", targetTempA, targetTempB, time_delay, max_duty_cycleA, max_duty_cycleB);
-    debugV(" - Data >> Kp:%f\tKd:%f\tKi:%f\n", Kp, Kd, Ki);
+    debugV(" - Data >> A(Kp, Ki, Kd):(%f , %f, %f)\tB(Kp, Ki, Kd):(%f , %f, %f)\n", Kp_A, Ki_A, Kd_A, Kp_B, Ki_B, Kd_B);
 
   }
 }
@@ -316,8 +350,8 @@ void post_data_to_sheets(HTTPSRedirect * client){
   value0 ++;
   value1 = temperatureA;
   value2 = temperatureB;
-  value3 = powerA/max_duty_cycleA;
-  value4 = powerB/max_duty_cycleB;
+  value3 = powerA;
+  value4 = powerB;
   value5 = targetTempA;
   value6 = targetTempB;
   value7 = sensorError;
@@ -377,7 +411,7 @@ void get_data_from_sensors(){
   debugV(" - Sensor B >> Status:%s\tHumidity:%f\tTemperature:%f\n",  dhtB.getStatusString(), humidityB, temperatureB);
 }
 
-void set_heater_power(){
+void set_heater_power_old(){
 
   debugI("Setting PWM signals for heater element power...");
 
@@ -399,6 +433,41 @@ void set_heater_power(){
   debugV(" - Power >> Heater A:%d\tHeater B:%d\n", powerA, powerB);
 }
 
+void update_PID_settings(){
+
+  debugI("Updating PID settings if necessary...");  
+
+  if (flagChangeKA) {
+    myPIDA.SetTunings(Kp_A, Ki_A, Kd_A);
+    debugV("PDI parameters for A were updated to (Kp, Ki, Kd) = (%f, $f, $f)", Kp_A, Ki_A, Kd_A);
+  }
+  if (flagChangeKB) {
+    myPIDB.SetTunings(Kp_B, Ki_B, Kd_B);
+    debugV("PDI parameters for B were updated to (Kp, Ki, Kd) = (%f, $f, $f)", Kp_B, Ki_B, Kd_B);
+  }
+
+}
+
+void set_heater_power_with_PID(){
+
+  debugI("Setting PWM signals for heater element power...");
+
+  // compute powerA and powerB control signal (0 to 100%)
+  myPIDA.Compute();
+  myPIDB.Compute();
+
+  // convert scale [0, 100%] into [0, max_duty_cycle] and set PWM signal
+  int pwmA = (int) round(powerA * max_duty_cycleA);
+  int pwmB = (int) round(powerB * max_duty_cycleB);
+
+  // set PWM values
+  analogWrite(ENA, pwmA);
+  analogWrite(ENB, pwmB);
+
+  // print status
+  debugV(" - Power >> Heater A:%3.1f\tHeater B:%3.1f", 100*powerA, 100*powerB);
+  debugV(" - PWM   >> Heater A:%d\tHeater B:%d\n", pwmA, pwmB);
+}
 
 // -------------------------
 // OTA CODE AND SAFEGUARDS
