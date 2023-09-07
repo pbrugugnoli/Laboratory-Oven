@@ -5,7 +5,7 @@
 // email: StorageUnitB@gmail.com
 
 
-#include <Arduino.h>
+#include <Arduino.h> 
 #include <EEPROM.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
@@ -80,8 +80,8 @@ int IN3 = D3;
 int IN4 = D4;
 
 // Enter command (insert_row or append_row) and your Google Sheets sheet name (default is Sheet1):
-String payload_base =  "{\"command\": \"insert_row\", \"sheet_name\": \"DataLog\", \"values\": ";
-String payload = "";
+char payload_base[] = "{\"command\": \"insert_row\", \"sheet_name\": \"DataLog\", \"values\": \"%10u,%5.1f,%5.1f,%5.1f,%5.1f,%5.1f,%5.1f,%2s,%10u\"}";
+char payload[124] = "";
 
 // Google Sheets setup (do not edit)
 const char* host = "script.google.com";
@@ -89,6 +89,8 @@ const int httpsPort = 443;
 const char* fingerprint = "";
 String url = String("/macros/s/") + GScriptId + "/exec";
 HTTPSRedirect* client = nullptr;
+String json_response;
+DynamicJsonDocument doc(1024);
 
 // Declare variables that will be published to Google Sheets
 int value0 = 0;
@@ -98,7 +100,8 @@ float value3 = 0;
 float value4 = 0;
 float value5 = 0;
 float value6 = 0;
-String value7 = "";
+char value7[] = "..";
+uint value8;
 
 // Declare reading variables
 double humidityA = 0;
@@ -109,7 +112,6 @@ int minsampleperiod = 2000;     // default min sample period for DHT22 in ms
 
 TempAndHumidity dhtValuesA;
 TempAndHumidity dhtValuesB;
-String sensorError = "";
 
 // delay control variables
 float elapsedTime, currentTime, previousTime;
@@ -117,11 +119,15 @@ float elapsedTime, currentTime, previousTime;
 // controlling parameters
 double powerA = 0;
 double powerB = 0;
-double targetTempA = 22;
-double targetTempB = 22;
+double targetTempA = 30;
+double targetTempB = 30;
 int max_duty_cycleA = 127;  // =50% ->  [12V (power supply) - 2V (L298N voltage drop)] * max_duty_cycle = 5V
 int max_duty_cycleB = 127;  // =50% ->  [12V (power supply) - 2V (L298N voltage drop)] * max_duty_cycle = 5V
-int time_delay = 5000;
+int pwmA, pwmB;
+double oldTempA, oldTempB;
+int counter = 0;
+double time_sec;
+int time_delay = 60;
 double Kp_A = 1, Kp_B = 1;
 double Kd_A = 0, Kd_B = 0;
 double Ki_A = 0, Ki_B = 0;
@@ -129,22 +135,21 @@ bool flagChangeKA = false;
 bool flagChangeKB = false;
 bool flagChangeDutyA = false;
 bool flagChangeDutyB = false;
-const int sampleRate = 2000;       // Time interval of the PID control in millisenconds
+const int sampleRate = 2000;      // Time interval of the PID control in millisenconds
+double debugcounter = 0;          // PEB TO BE DELETED
 
 PID myPIDA (&temperatureA, &powerA, &targetTempA, Kp_A, Ki_A, Kd_A, DIRECT);
 PID myPIDB (&temperatureB, &powerB, &targetTempB, Kp_B, Ki_B, Kd_B, DIRECT);
 
+
 // ------------------------------------------
 // SETUP FUNCTION
 // ------------------------------------------
-
 void setup() {
   // Serial Communication
   Serial.begin(9600);        
-  delay(10);
-  
-  debugA("\n \n Booting MCU - v1.6 ...\n \n");
-  
+  delay(10000);
+   
   // init EEPROM object 
   // to read/write wifi configuration.
   EEPROM.begin(512);
@@ -163,6 +168,9 @@ void setup() {
     Debug.showProfiler(true); // Profiler (Good to measure times, to optimize codes)
     Debug.showColors(true); // Colors
   #endif
+
+  // Start Logging
+  debugA("\n \n Booting MCU - v1.6 ...\n \n");
 
   // Onboard LED
   pinMode(LED_BUILTIN, OUTPUT);  // GPIO 16
@@ -188,7 +196,7 @@ void setup() {
   digitalWrite(IN4, HIGH);
 
   // Use HTTPSRedirect class to create a new TLS connection
-  debugV("Connecting to %s", host);
+  debugA("Creating Client for connection...", host);
 
   client = new HTTPSRedirect(httpsPort);
   client->setInsecure();
@@ -198,17 +206,18 @@ void setup() {
   // Try to connect for a maximum of 10 times
   bool flag = false;
   for (int i=0; i<10; i++){ 
+    debugA("Trying to connection... %u", i);
     int retval = client->connect(host, httpsPort);
     if (retval == 1){
        flag = true;
-       debugV(" - Connected successfully");
+       debugA(" - Connected successfully");
        break;
     }
     else
       debugI("Connection failed. Retrying...");
   }
   if (!flag){
-    debugE("Could not connect to %s", host);
+    debugA("Could not connect to %s", host);
     return;
   }
  
@@ -226,16 +235,18 @@ void setup() {
   update_PID_settings();
 
   // clean up
-  delete client;    // delete HTTPSRedirect object
-  client = nullptr; // delete HTTPSRedirect object
+  // delete client;    // delete HTTPSRedirect object
+  // client = nullptr; // delete HTTPSRedirect object
 
 }
 
 // ------------------------------------------
 // MAIN LOOP
 // ------------------------------------------
-
 void loop() {
+
+  // Debug OMM
+  debugV("*** Begin Loop - Free Heap Memory:%u\t Max Block Size:%u\n", ESP.getFreeHeap(), ESP.getMaxFreeBlockSize());
 
   // Give processing time for ArduinoOTA.
   ArduinoOTA.handle();
@@ -243,43 +254,52 @@ void loop() {
   // Give processing time for the webserver.
   server.handleClient();
 
-  // Create HTTP client
-  static bool flag = false;
-  if (!flag){
-    client = new HTTPSRedirect(httpsPort);
-    client->setInsecure();
-    flag = true;
-    client->setPrintResponseBody(true);
-    client->setContentTypeHeader("application/json");
-  }
-  if (client != nullptr){
-    if (!client->connected()){
-      client->connect(host, httpsPort);
-      // it seems to me that a check if the connection is ok
-    }
-  }
-  else{
-    debugE("Error creating HTTPSRedirect object!");
-  }
+  // Create HTTP client - not necessary as "client" comes from the SETUP
+  // static bool flag = false;
+  // if (!flag){
+  //   client = new HTTPSRedirect(httpsPort);
+  //   client->setInsecure();
+  //   flag = true;
+  //   client->setPrintResponseBody(true);
+  //   client->setContentTypeHeader("application/json");
+  // }
 
   // After each time_delay log retrieve parameters from google sheet and write log
   currentTime = millis();                           // get current time
   elapsedTime = (currentTime - previousTime)/1000;  // in seconds
   if (elapsedTime > time_delay) {
     // Turn on LED to indicate processing
-    //digitalWrite(LED_BUILTIN, LOW);  it mess up with PWM signal !?!?!
-    
+    // digitalWrite(LED_BUILTIN, LOW);  it mess up with PWM signal !?!?!
+    delay(1000);              // PEB TO BE DELETED
+    debugcounter += 0.25;     // PEB TO BE DELETED
+
+    // verify if client is still connected is connected
+    if (client != nullptr){
+      if (!client->connected()){
+        debugI("Client not connected, try to (re)connect...");
+        client->connect(host, httpsPort);
+        debugI("Client connected status: %u\n", client->connected());
+        // it seems to me that a check if the connection is ok
+      }
+    }
+    else{
+      debugE("Error creating HTTPSRedirect object!");
+    }    
+
+    if (client->connected()){
     // GET data from google sheet
-    get_data_from_sheets(client);
+      get_data_from_sheets(client);
 
     // Update PID
-    update_PID_settings();
+      update_PID_settings();
 
     // POST data into google sheet 
-    post_data_to_sheets(client);
+       post_data_to_sheets(client);
+    }
 
     // Turn off LED
     //digitalWrite(LED_BUILTIN, HIGH);  
+    debugI("Free Heap:%u \t Max. Block Size:%u \t Counter:%5.2f\n", ESP.getFreeHeap(), ESP.getMaxFreeBlockSize(), debugcounter); // PEB TO BE DELETED
 
     previousTime = currentTime;      // the last "trigger time" is stored 
   }
@@ -298,18 +318,19 @@ void loop() {
 // -------------------------------------------------------------------
 // MAIN LABORATORY OVEN FUNCTIONS (to be replace for a class+methods)
 // -------------------------------------------------------------------
-
 void get_data_from_sheets(HTTPSRedirect * client){
 
   debugI("Getting data from Google Sheet...");
 
   if(client->GET(url, host, false)){ 
-    String json_response = client->getResponseBody();
+    json_response = client->getResponseBody(); // json_response was declared as global to avoid mem fragmentation
 
  // Decode JSON/Extract values
-    DynamicJsonDocument doc(1024);
+    //DynamicJsonDocument doc(1024);          // doc as a global var to avoid mem fragmentation
+    debugI(" - Starting deserialization...");
     deserializeJson(doc, json_response);  
 
+    debugI(" - Starting retrieving...");
     targetTempA = doc["targetA"];
     targetTempB = doc["targetB"];
     time_delay = doc["delay"];
@@ -334,7 +355,6 @@ void get_data_from_sheets(HTTPSRedirect * client){
       flagChangeKB = false;
     }
 
-
     debugV(" - Data >> Target A:%f\tTarget B:%f\tDelay:%d\tDuty A:%d\tDuty B:%d", targetTempA, targetTempB, time_delay, max_duty_cycleA, max_duty_cycleB);
     debugV(" - Data >> A(Kp, Ki, Kd):(%f , %f, %f)\tB(Kp, Ki, Kd):(%f , %f, %f)\n", Kp_A, Ki_A, Kd_A, Kp_B, Ki_B, Kd_B);
 
@@ -353,14 +373,16 @@ void post_data_to_sheets(HTTPSRedirect * client){
   value4 = powerB;
   value5 = targetTempA;
   value6 = targetTempB;
-  value7 = sensorError;
+  // value7 = sensorError;
+  value8 = ESP.getFreeHeap(); 
 
   // prepare payload
-  payload = payload_base + "\"" + value0 + "," + value1+ "," + value2 + "," + value3 + "," + value4 + "," + value5 + "," + value6 + "," + value7 +"\"}";
-  
+  // payload = payload_base + "\"" + value0 + "," + value1+ "," + value2 + "," + value3 + "," + value4 + "," + value5 + "," + value6 + ","  + value7 + ","  + value8 +"\"}";
+  sprintf(payload, payload_base, value0, value1, value2, value3, value4, value5, value6, value7, value8);
+
   if(client->POST(url, host, payload, false)){ 
     // Published data to Google Sheets
-    debugV(" - Payload >> %s\n", payload.c_str());
+    debugV(" - Payload >> %s\n", payload);
   }
   else{
     debugE(" - Error while connecting\n");
@@ -370,10 +392,17 @@ void post_data_to_sheets(HTTPSRedirect * client){
 void get_data_from_sensors(){
   
   debugI("Retrieve data from sensor...");
-  
+
+  // store previous temperatures
+  oldTempA = temperatureA;
+  oldTempB = temperatureB;
+
   // Retrieve data from sensor A
-  sensorError = "...";
-  int counter = 0;
+  //sensorError = "...";
+  counter = 0;
+  
+  // time in seconds when sensor measures were taken
+  time_sec = millis()/1000;
 
   while (true) {
     dhtValuesA = dhtA.getTempAndHumidity();
@@ -383,7 +412,8 @@ void get_data_from_sensors(){
       break;
     }
     if (counter++ == 3){
-      sensorError = sensorError + " ErrorA";// + dhtA.getStatusString() + "\t";
+      // sensorError = sensorError + " ErrorA";// + dhtA.getStatusString() + "\t";
+      value7[0] = 'A';
       break;
     }
     delay(dhtA.getMinimumSamplingPeriod());
@@ -399,7 +429,8 @@ void get_data_from_sensors(){
       break;
     }
     if (counter++ == 3){
-      sensorError = sensorError + " ErrorB"; // + dhtB.getStatusString() + "\t";
+      //sensorError = sensorError + " ErrorB"; // + dhtB.getStatusString() + "\t";
+      value7[1] = 'B';
       break;
     }
     delay(dhtB.getMinimumSamplingPeriod());
@@ -408,28 +439,6 @@ void get_data_from_sensors(){
   // print status
   debugV(" - Sensor A >> Status:%s\tHumidity:%f\tTemperature:%f",  dhtA.getStatusString(), humidityA, temperatureA);
   debugV(" - Sensor B >> Status:%s\tHumidity:%f\tTemperature:%f\n",  dhtB.getStatusString(), humidityB, temperatureB);
-}
-
-void set_heater_power_old(){
-
-  debugI("Setting PWM signals for heater element power...");
-
-  if (targetTempA > temperatureA) {
-    powerA = max_duty_cycleA;
-  } else {
-    powerA = 0;
-  }
-  analogWrite(ENA, powerA);
-
-  if (targetTempB > temperatureB) {
-    powerB = max_duty_cycleB;
-  } else {
-    powerB = 0;
-  }
-  analogWrite(ENB, powerB);
-
-  // print status
-  debugV(" - Power >> Heater A:%d\tHeater B:%d\n", powerA, powerB);
 }
 
 void update_PID_settings(){
@@ -458,8 +467,8 @@ void set_heater_power_with_PID(){
   myPIDB.Compute();
 
   // convert scale [0, 100%] into [0, max_duty_cycle] and set PWM signal
-  int pwmA = (int) round(powerA * max_duty_cycleA);
-  int pwmB = (int) round(powerB * max_duty_cycleB);
+  pwmA = (int) round(powerA * max_duty_cycleA);
+  pwmB = (int) round(powerB * max_duty_cycleB);
 
   // set PWM values
   analogWrite(ENA, pwmA);
@@ -473,7 +482,6 @@ void set_heater_power_with_PID(){
 // -------------------------
 // OTA CODE AND SAFEGUARDS
 // -------------------------
-
 void readWifiConf() {
 
   debugI("Retrieving data from EEPROM...");
@@ -490,7 +498,6 @@ void readWifiConf() {
   debugV(" - EEPROM >> SSID: %s \t PASS: *******\n");
 }
 
-
 void writeWifiConf() {
 
   debugI("Writing data into EEPROM...\n");
@@ -505,6 +512,7 @@ bool connectToWiFi() {
   debugI("Connecting to WiFi - SSID:%s", wifiConf.wifi_ssid);
 
   WiFi.mode(WIFI_STA); // station mode
+  WiFi.setSleepMode(WIFI_NONE_SLEEP);
   WiFi.begin(wifiConf.wifi_ssid, wifiConf.wifi_password);
 
   if (WiFi.waitForConnectResult() == WL_CONNECTED) {
