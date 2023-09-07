@@ -1,26 +1,38 @@
-// Example Arduino/ESP8266 code to upload data to Google Sheets
-// Follow setup instructions found here:
-// https://github.com/StorageB/Google-Sheets-Logging
-// 
-// email: StorageUnitB@gmail.com
-
+// Laboratory Oven control system
+// Base on several libraries
+// - read/write from/to google sheets: https://github.com/StorageB/Google-Sheets-Logging
+// - InfluxDB
+// - PID control
 
 #include <Arduino.h> 
+#include "C:\Users\pbrug\Documents\01. PEB Personal\Credenciais Cloud\SecurityGit\credentials.h"
+//#include <ESP8266WiFi.h>
+#if defined(ESP32)
+  #include <WiFiMulti.h>
+  WiFiMulti wifiMulti;
+  #define DEVICE "LAB_OVEN - ESP32"
+#elif defined(ESP8266)
+  #include <ESP8266WiFiMulti.h>
+  ESP8266WiFiMulti wifiMulti;
+  #define DEVICE "LAB_OVEN - ESP8266"
+#endif
+
 #include <EEPROM.h>
-#include <ESP8266WiFi.h>
+#include <ArduinoOTA.h>
 #include <ESP8266WebServer.h>
+
 #include "HTTPSRedirect.h"
+#include <InfluxDbClient.h>
+#include <InfluxDbCloud.h>
 #include "DHTesp.h"
 #include <ArduinoJson.h>
-#include <ArduinoOTA.h>
-#include "C:\Users\pbrug\Documents\01. PEB Personal\Credenciais Cloud\SecurityGit\credentials.h"
 #include <PID_v1.h>
 
 // DISABLE DEBUG FOR PRODUCTION
 //#define DEBUG_DISABLED true
 
 // SELECT BETWEEN SERIAL or NETWORK DEBUG
-#define REMOTE_DEBUG
+// #define REMOTE_DEBUG
 
 #ifdef REMOTE_DEBUG
   // OVER NETWORK DEBUG
@@ -40,7 +52,24 @@
   //#define DEBUG_MINIMUM true       // IMPORTANT FOR ARDUINO - LOW MEMORY    
 #endif
 
+// Configuring INFLUXDB
+// Time zone info
+#define TZ_INFO "UTC-3"
 
+// Influx parameters
+#define INFLUXDB_URL "http://192.168.27.35:8086"
+#define INFLUXDB_TOKEN "t5dhGBYaMlt3h_IjwKV-uWzIu_qDyLFSAgJBPImwzB-sFwhfoXU3_R8t6A7OSZzwpdwJGBiM05Z_p82p1lzXqA=="
+#define INFLUXDB_ORG "daa7ea98aa4cec5a"
+#define INFLUXDB_BUCKET "peb01"
+
+// Declare InfluxDB client instance with preconfigured InfluxCloud certificate
+InfluxDBClient influx_client(INFLUXDB_URL, INFLUXDB_ORG, INFLUXDB_BUCKET, INFLUXDB_TOKEN, InfluxDbCloud2CACert);
+
+// Declare Data point
+Point dpLabA("LabA");
+Point dpLabB("LabB");
+Point dpMCU("ESP12E");
+Point datapoint("LabOven");
 
 // Configuration for fallback access point 
 // if Wi-Fi connection fails.
@@ -127,7 +156,7 @@ int pwmA, pwmB;
 double oldTempA, oldTempB;
 int counter = 0;
 double time_sec;
-int time_delay = 60;
+int time_delay = 15;
 double Kp_A = 1, Kp_B = 1;
 double Kd_A = 0, Kd_B = 0;
 double Ki_A = 0, Ki_B = 0;
@@ -140,7 +169,6 @@ double debugcounter = 0;          // PEB TO BE DELETED
 
 PID myPIDA (&temperatureA, &powerA, &targetTempA, Kp_A, Ki_A, Kd_A, DIRECT);
 PID myPIDB (&temperatureB, &powerB, &targetTempB, Kp_B, Ki_B, Kd_B, DIRECT);
-
 
 // ------------------------------------------
 // SETUP FUNCTION
@@ -175,6 +203,24 @@ void setup() {
   // Onboard LED
   pinMode(LED_BUILTIN, OUTPUT);  // GPIO 16
 
+  // Accurate time is necessary for certificate validation and writing in batches
+  // We use the NTP servers in your area as provided by: https://www.pool.ntp.org/zone/
+  // Syncing progress and the time will be printed to Serial.
+  debugV("Synchronize time...");
+  timeSync(TZ_INFO, "pool.ntp.org", "time.nis.gov");  
+
+  // Connect to Influxdb
+  debugV("Connecting to influxDB...");
+  if (influx_client.validateConnection()) {
+    debugV("Connected to InfluxDB: %s\n", influx_client.getServerUrl());
+  } else {
+    debugE("InfluxDB connection failed: %s\n", influx_client.getLastErrorMessage() );
+  }
+
+  // Add tags to the data point
+  datapoint.addTag("device", DEVICE);
+  datapoint.addTag("SSID", WiFi.SSID());
+
   // Set Sensor A and B
   debugV("Setting up sensors...");
   dhtA.setup(DHTpin1, DHTesp::DHT11); //for DHT11 Connect DHT sensor to GPIO 14
@@ -195,34 +241,33 @@ void setup() {
   digitalWrite(IN3, LOW);
   digitalWrite(IN4, HIGH);
 
-  // Use HTTPSRedirect class to create a new TLS connection
-  debugA("Creating Client for connection...", host);
-
-  client = new HTTPSRedirect(httpsPort);
-  client->setInsecure();
-  client->setPrintResponseBody(true);
-  client->setContentTypeHeader("application/json");
+  // // Use HTTPSRedirect class to create a new TLS connection
+  // debugA("Creating Client for HTTP connection...", host);
+  // client = new HTTPSRedirect(httpsPort);
+  // client->setInsecure();
+  // client->setPrintResponseBody(true);
+  // client->setContentTypeHeader("application/json");
   
-  // Try to connect for a maximum of 10 times
-  bool flag = false;
-  for (int i=0; i<10; i++){ 
-    debugA("Trying to connection... %u", i);
-    int retval = client->connect(host, httpsPort);
-    if (retval == 1){
-       flag = true;
-       debugA(" - Connected successfully");
-       break;
-    }
-    else
-      debugI("Connection failed. Retrying...");
-  }
-  if (!flag){
-    debugA("Could not connect to %s", host);
-    return;
-  }
+  // // Try to connect for a maximum of 10 times
+  // bool flag = false;
+  // for (int i=0; i<10; i++){ 
+  //   debugA("Trying to connection... %u", i);
+  //   int retval = client->connect(host, httpsPort);
+  //   if (retval == 1){
+  //      flag = true;
+  //      debugA(" - Connected successfully");
+  //      break;
+  //   }
+  //   else
+  //     debugI("Connection failed. Retrying...");
+  // }
+  // if (!flag){
+  //   debugA("Could not connect to %s", host);
+  //   return;
+  // }
  
-  // GET data from google sheet - initialize target variables
-  get_data_from_sheets(client);
+  // // GET data from google sheet - initialize target variables
+  // get_data_from_sheets(client);
   previousTime = millis(); 
 
   // Setting up PID controllers
@@ -234,7 +279,7 @@ void setup() {
   myPIDB.SetOutputLimits(0.0, 1.0);
   update_PID_settings();
 
-  // clean up
+  // clean up http client as it will not be used any more (not logging or reading google sheets)
   // delete client;    // delete HTTPSRedirect object
   // client = nullptr; // delete HTTPSRedirect object
 
@@ -254,48 +299,41 @@ void loop() {
   // Give processing time for the webserver.
   server.handleClient();
 
-  // Create HTTP client - not necessary as "client" comes from the SETUP
-  // static bool flag = false;
-  // if (!flag){
-  //   client = new HTTPSRedirect(httpsPort);
-  //   client->setInsecure();
-  //   flag = true;
-  //   client->setPrintResponseBody(true);
-  //   client->setContentTypeHeader("application/json");
-  // }
-
   // After each time_delay log retrieve parameters from google sheet and write log
   currentTime = millis();                           // get current time
   elapsedTime = (currentTime - previousTime)/1000;  // in seconds
   if (elapsedTime > time_delay) {
     // Turn on LED to indicate processing
-    // digitalWrite(LED_BUILTIN, LOW);  it mess up with PWM signal !?!?!
+    digitalWrite(LED_BUILTIN, LOW);  //it mess up with PWM signal !?!?!
     delay(1000);              // PEB TO BE DELETED
     debugcounter += 0.25;     // PEB TO BE DELETED
 
-    // verify if client is still connected is connected
-    if (client != nullptr){
-      if (!client->connected()){
-        debugI("Client not connected, try to (re)connect...");
-        client->connect(host, httpsPort);
-        debugI("Client connected status: %u\n", client->connected());
-        // it seems to me that a check if the connection is ok
-      }
-    }
-    else{
-      debugE("Error creating HTTPSRedirect object!");
-    }    
+    // // verify if client is still connected is connected
+    // if (client != nullptr){
+    //   if (!client->connected()){
+    //     debugI("Client not connected, try to (re)connect...");
+    //     client->connect(host, httpsPort);
+    //     debugI("Client connected status: %u\n", client->connected());
+    //     // it seems to me that a check if the connection is ok
+    //   }
+    // }
+    // else{
+    //   debugE("Error creating HTTPSRedirect object!");
+    // }    
 
-    if (client->connected()){
-    // GET data from google sheet
-      get_data_from_sheets(client);
+    // if (client->connected()){
+    // // GET data from google sheet
+    //   get_data_from_sheets(client);
 
-    // Update PID
-      update_PID_settings();
+    // // Update PID
+    //   update_PID_settings();
 
-    // POST data into google sheet 
-       post_data_to_sheets(client);
-    }
+    // // POST data into google sheet 
+    //    post_data_to_sheets(client);
+    // }
+
+    // write data into influxdb
+    log_to_influxdb();
 
     // Turn off LED
     //digitalWrite(LED_BUILTIN, HIGH);  
@@ -477,6 +515,35 @@ void set_heater_power_with_PID(){
   // print status
   debugV(" - Power >> Heater A:%3.1f\tHeater B:%3.1f", 100*powerA, 100*powerB);
   debugV(" - PWM   >> Heater A:%d\tHeater B:%d\n", pwmA, pwmB);
+}
+
+void log_to_influxdb(){
+  // Clear fields for reusing the point. Tags will remain the same as set above.
+  datapoint.clearFields();
+
+  // Store measured value into point
+  datapoint.addField("TempA", temperatureA);
+  datapoint.addField("TempB", temperatureB);
+  datapoint.addField("PowerA", powerA*100.0);
+  datapoint.addField("PowerB", powerB*100.0);
+  datapoint.addField("TargetA", targetTempA);
+  datapoint.addField("TargetB", targetTempB);
+  datapoint.addField("Error", value7);
+  datapoint.addField("FreeHeap", ESP.getFreeHeap());
+  datapoint.addField("DebugCounter", debugcounter);
+
+  // Print what are we exactly writing
+  debugV("Writing into Influx: %s\n", datapoint.toLineProtocol());
+
+  // Check WiFi connection and reconnect if needed
+  if (wifiMulti.run() != WL_CONNECTED) {
+    debugE("Wifi connection lost");
+  }
+
+  // Write point
+  if (!influx_client.writePoint(datapoint)) {
+    debugE("InfluxDB write failed: %s\n", influx_client.getLastErrorMessage());
+  }
 }
 
 // -------------------------
