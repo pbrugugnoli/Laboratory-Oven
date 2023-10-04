@@ -32,7 +32,7 @@
 //#define DEBUG_DISABLED true
 
 // SELECT BETWEEN SERIAL or NETWORK DEBUG
-// #define REMOTE_DEBUG
+#define REMOTE_DEBUG
 
 #ifdef REMOTE_DEBUG
   // OVER NETWORK DEBUG
@@ -57,9 +57,9 @@
 #define TZ_INFO "UTC-3"
 
 // Influx parameters
-#define INFLUXDB_URL "http://192.168.27.35:8086"
-#define INFLUXDB_TOKEN "t5dhGBYaMlt3h_IjwKV-uWzIu_qDyLFSAgJBPImwzB-sFwhfoXU3_R8t6A7OSZzwpdwJGBiM05Z_p82p1lzXqA=="
-#define INFLUXDB_ORG "daa7ea98aa4cec5a"
+#define INFLUXDB_URL "http://192.168.27.127:8086"
+#define INFLUXDB_TOKEN "pMvYfh7lmJfRhb3rBcOWlCmXtswhLOxDSEo-Z8GBx6KBXfi0ZR935B4xAKsjfSNUwgq_iX99xT7vfOQVafkVqA=="
+#define INFLUXDB_ORG "PEB"
 #define INFLUXDB_BUCKET "peb01"
 
 // Declare InfluxDB client instance with preconfigured InfluxCloud certificate
@@ -221,6 +221,13 @@ void setup() {
   datapoint.addTag("device", DEVICE);
   datapoint.addTag("SSID", WiFi.SSID());
 
+  dpLabA.addTag("device", DEVICE);
+  dpLabA.addTag("Sensor", "BoxA");
+  dpLabB.addTag("device", DEVICE);
+  dpLabB.addTag("Sensor", "BoxB");
+  dpMCU.addTag("device", DEVICE);
+  dpMCU.addTag("SSID", WiFi.SSID());
+
   // Set Sensor A and B
   debugV("Setting up sensors...");
   dhtA.setup(DHTpin1, DHTesp::DHT11); //for DHT11 Connect DHT sensor to GPIO 14
@@ -333,7 +340,13 @@ void loop() {
     // }
 
     // write data into influxdb
-    log_to_influxdb();
+    if (WiFi.status() != WL_CONNECTED){
+      debugI("Wifi was disconnected... Trying to reconnect");
+      connectToWiFi();
+    }
+    if (WiFi.status() == WL_CONNECTED){
+      log_to_influxdb();
+    }
 
     // Turn off LED
     //digitalWrite(LED_BUILTIN, HIGH);  
@@ -518,19 +531,35 @@ void set_heater_power_with_PID(){
 }
 
 void log_to_influxdb(){
-  // Clear fields for reusing the point. Tags will remain the same as set above.
-  datapoint.clearFields();
+  // // Clear fields for reusing the point. Tags will remain the same as set above.
+  // datapoint.clearFields();
 
-  // Store measured value into point
-  datapoint.addField("TempA", temperatureA);
-  datapoint.addField("TempB", temperatureB);
-  datapoint.addField("PowerA", powerA*100.0);
-  datapoint.addField("PowerB", powerB*100.0);
-  datapoint.addField("TargetA", targetTempA);
-  datapoint.addField("TargetB", targetTempB);
-  datapoint.addField("Error", value7);
-  datapoint.addField("FreeHeap", ESP.getFreeHeap());
-  datapoint.addField("DebugCounter", debugcounter);
+  // // Store measured value into point
+  // datapoint.addField("TempA", temperatureA);
+  // datapoint.addField("TempB", temperatureB);
+  // datapoint.addField("PowerA", powerA*100.0);
+  // datapoint.addField("PowerB", powerB*100.0);
+  // datapoint.addField("TargetA", targetTempA);
+  // datapoint.addField("TargetB", targetTempB);
+  // datapoint.addField("Error", value7);
+  // datapoint.addField("FreeHeap", ESP.getFreeHeap());
+  // datapoint.addField("DebugCounter", debugcounter);
+
+  dpLabA.clearFields();
+  dpLabA.addField("Temperature", temperatureA);
+  dpLabA.addField("Power", powerA*100.0);
+  dpLabA.addField("Target", targetTempA);
+
+  dpLabB.clearFields();
+  dpLabB.addField("Temperature", temperatureB);
+  dpLabB.addField("Power", powerB*100.0);
+  dpLabB.addField("Target", targetTempB);
+
+  dpMCU.clearFields();
+  dpMCU.addField("Error", value7);
+  dpMCU.addField("FreeHeap", ESP.getFreeHeap());
+  dpMCU.addField("DebugCounter", debugcounter);  
+
 
   // Print what are we exactly writing
   debugV("Writing into Influx: %s\n", datapoint.toLineProtocol());
@@ -541,8 +570,17 @@ void log_to_influxdb(){
   }
 
   // Write point
-  if (!influx_client.writePoint(datapoint)) {
-    debugE("InfluxDB write failed: %s\n", influx_client.getLastErrorMessage());
+  // if (!influx_client.writePoint(datapoint)) {
+  //   debugE("InfluxDB write failed: %s\n", influx_client.getLastErrorMessage());
+  // }
+  if (!influx_client.writePoint(dpLabA)) {
+    debugE("InfluxDB LabA write failed: %s\n", influx_client.getLastErrorMessage());
+  }
+  if (!influx_client.writePoint(dpLabB)) {
+    debugE("InfluxDB LabB write failed: %s\n", influx_client.getLastErrorMessage());
+  }
+  if (!influx_client.writePoint(dpMCU)) {
+    debugE("InfluxDB MCU write failed: %s\n", influx_client.getLastErrorMessage());
   }
 }
 

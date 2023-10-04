@@ -1,4 +1,3 @@
-
 // Example Google Scrips code to upload data to Google Sheets from Arduino/ESP8266
 // based on previous work of StorageUnitB@gmail.com
 // https://github.com/StorageB/Google-Sheets-Logging
@@ -10,27 +9,15 @@ var str = "";
 
 function doPost(e) {
 
-  // dirt adjustment of "e" to become a JSON like for influxdb messages
-  var sheet1 = SS.getSheetByName("DataLog");
-  sheet1.getRange('K1').setValue(e);
-  var e2 = sheet1.getRange('K1').getValue();
-  var regex = new RegExp("parameter=({[^}]+})");
-  e2 = regex.exec(e2)[1];
-  e2 = e2.replace(/(\w+)=(\w+)/g, '"$1":"$2"').replace(/(\w+)='([^']+)'/g, '"$1":"$2"').replace();
-  sheet1.getRange('L1').setValue(e2);
-
   var parsedData;
+  
   try { 
-    //parsedData = JSON.parse(e.postData.contents);
-    parsedData = JSON.parse(e2);
+    parsedData = JSON.parse(e.postData.contents);
   } 
   catch(f){
     return ContentService.createTextOutput("Error in parsing request body: " + f.message);
   }
-
-  var teste_values = parsedData.values 
-  sheet1.getRange('M1').setValue(teste_values);
-
+   
   if (parsedData !== undefined){
     var flag = parsedData.format;
     if (flag === undefined){
