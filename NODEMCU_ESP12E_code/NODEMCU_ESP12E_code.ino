@@ -10,11 +10,11 @@
 #if defined(ESP32)
   #include <WiFiMulti.h>
   WiFiMulti wifiMulti;
-  #define DEVICE "LAB_OVEN - ESP32"
+  #define DEVICE "ESP32"
 #elif defined(ESP8266)
   #include <ESP8266WiFiMulti.h>
   ESP8266WiFiMulti wifiMulti;
-  #define DEVICE "LAB_OVEN - ESP8266"
+  #define DEVICE "NodeMCU-ESP12E"
 #endif
 
 #include <EEPROM.h>
@@ -60,16 +60,22 @@
 #define INFLUXDB_URL "http://192.168.27.127:8086"
 #define INFLUXDB_TOKEN "pMvYfh7lmJfRhb3rBcOWlCmXtswhLOxDSEo-Z8GBx6KBXfi0ZR935B4xAKsjfSNUwgq_iX99xT7vfOQVafkVqA=="
 #define INFLUXDB_ORG "PEB"
-#define INFLUXDB_BUCKET "peb01"
+#define INFLUXDB_BUCKET "LabOven"
 
 // Declare InfluxDB client instance with preconfigured InfluxCloud certificate
 InfluxDBClient influx_client(INFLUXDB_URL, INFLUXDB_ORG, INFLUXDB_BUCKET, INFLUXDB_TOKEN, InfluxDbCloud2CACert);
 
-// Declare Data point
-Point dpLabA("LabA");
-Point dpLabB("LabB");
-Point dpMCU("ESP12E");
-Point datapoint("LabOven");
+// Declare Data points = SensorData as a table with historical IOT data, and SensorConfig as configuration table 
+Point dpLabA("SensorData");
+Point dpLabB("SensorData");
+Point dpMCU("SensorData");
+//Point datapoint("LabOven");
+
+// Declare influx query variables
+String influx_query;
+String field, sensor, device;
+double value;
+
 
 // Configuration for fallback access point 
 // if Wi-Fi connection fails.
@@ -157,9 +163,9 @@ double oldTempA, oldTempB;
 int counter = 0;
 double time_sec;
 int time_delay = 15;
-double Kp_A = 1, Kp_B = 1;
-double Kd_A = 0, Kd_B = 0;
-double Ki_A = 0, Ki_B = 0;
+double Kp_A = 1, Kp_B = 1, new_Kp;
+double Kd_A = 0, Kd_B = 0, new_Kd;
+double Ki_A = 0, Ki_B = 0, new_Ki;
 bool flagChangeKA = false;
 bool flagChangeKB = false;
 bool flagChangeDutyA = false;
@@ -183,6 +189,7 @@ void setup() {
   EEPROM.begin(512);
   readWifiConf();
 
+  // Connect to wifi or setup acess point in case of failure
   if (!connectToWiFi()) {
     setUpAccessPoint();
   }
@@ -203,9 +210,7 @@ void setup() {
   // Onboard LED
   pinMode(LED_BUILTIN, OUTPUT);  // GPIO 16
 
-  // Accurate time is necessary for certificate validation and writing in batches
-  // We use the NTP servers in your area as provided by: https://www.pool.ntp.org/zone/
-  // Syncing progress and the time will be printed to Serial.
+  // Get time from external service
   debugV("Synchronize time...");
   timeSync(TZ_INFO, "pool.ntp.org", "time.nis.gov");  
 
@@ -218,15 +223,9 @@ void setup() {
   }
 
   // Add tags to the data point
-  datapoint.addTag("device", DEVICE);
-  datapoint.addTag("SSID", WiFi.SSID());
-
-  dpLabA.addTag("device", DEVICE);
-  dpLabA.addTag("Sensor", "BoxA");
-  dpLabB.addTag("device", DEVICE);
-  dpLabB.addTag("Sensor", "BoxB");
+  dpLabA.addTag("sensor", "BoxA");
+  dpLabB.addTag("sensor", "BoxB");
   dpMCU.addTag("device", DEVICE);
-  dpMCU.addTag("SSID", WiFi.SSID());
 
   // Set Sensor A and B
   debugV("Setting up sensors...");
@@ -248,33 +247,16 @@ void setup() {
   digitalWrite(IN3, LOW);
   digitalWrite(IN4, HIGH);
 
-  // // Use HTTPSRedirect class to create a new TLS connection
-  // debugA("Creating Client for HTTP connection...", host);
-  // client = new HTTPSRedirect(httpsPort);
-  // client->setInsecure();
-  // client->setPrintResponseBody(true);
-  // client->setContentTypeHeader("application/json");
-  
-  // // Try to connect for a maximum of 10 times
-  // bool flag = false;
-  // for (int i=0; i<10; i++){ 
-  //   debugA("Trying to connection... %u", i);
-  //   int retval = client->connect(host, httpsPort);
-  //   if (retval == 1){
-  //      flag = true;
-  //      debugA(" - Connected successfully");
-  //      break;
-  //   }
-  //   else
-  //     debugI("Connection failed. Retrying...");
-  // }
-  // if (!flag){
-  //   debugA("Could not connect to %s", host);
-  //   return;
-  // }
- 
-  // // GET data from google sheet - initialize target variables
-  // get_data_from_sheets(client);
+  // GET data from google sheet (through out influxdb) - initialize target variables
+  // read and write data into influxdb
+  if (WiFi.status() != WL_CONNECTED){
+    debugI("Wifi was disconnected... Trying to reconnect");
+    connectToWiFi();
+  }
+  if (WiFi.status() == WL_CONNECTED){
+    get_data_from_influxdb();
+  }
+
   previousTime = millis(); 
 
   // Setting up PID controllers
@@ -285,10 +267,6 @@ void setup() {
   myPIDA.SetOutputLimits(0.0, 1.0);
   myPIDB.SetOutputLimits(0.0, 1.0);
   update_PID_settings();
-
-  // clean up http client as it will not be used any more (not logging or reading google sheets)
-  // delete client;    // delete HTTPSRedirect object
-  // client = nullptr; // delete HTTPSRedirect object
 
 }
 
@@ -309,48 +287,18 @@ void loop() {
   // After each time_delay log retrieve parameters from google sheet and write log
   currentTime = millis();                           // get current time
   elapsedTime = (currentTime - previousTime)/1000;  // in seconds
+
   if (elapsedTime > time_delay) {
-    // Turn on LED to indicate processing
-    digitalWrite(LED_BUILTIN, LOW);  //it mess up with PWM signal !?!?!
-    delay(1000);              // PEB TO BE DELETED
-    debugcounter += 0.25;     // PEB TO BE DELETED
+    debugcounter += time_delay/60.0;
 
-    // // verify if client is still connected is connected
-    // if (client != nullptr){
-    //   if (!client->connected()){
-    //     debugI("Client not connected, try to (re)connect...");
-    //     client->connect(host, httpsPort);
-    //     debugI("Client connected status: %u\n", client->connected());
-    //     // it seems to me that a check if the connection is ok
-    //   }
-    // }
-    // else{
-    //   debugE("Error creating HTTPSRedirect object!");
-    // }    
-
-    // if (client->connected()){
-    // // GET data from google sheet
-    //   get_data_from_sheets(client);
-
-    // // Update PID
-    //   update_PID_settings();
-
-    // // POST data into google sheet 
-    //    post_data_to_sheets(client);
-    // }
-
-    // write data into influxdb
+    // read and write data into influxdb
     if (WiFi.status() != WL_CONNECTED){
       debugI("Wifi was disconnected... Trying to reconnect");
       connectToWiFi();
     }
     if (WiFi.status() == WL_CONNECTED){
-      log_to_influxdb();
+      post_data_into_influxdb();
     }
-
-    // Turn off LED
-    //digitalWrite(LED_BUILTIN, HIGH);  
-    debugI("Free Heap:%u \t Max. Block Size:%u \t Counter:%5.2f\n", ESP.getFreeHeap(), ESP.getMaxFreeBlockSize(), debugcounter); // PEB TO BE DELETED
 
     previousTime = currentTime;      // the last "trigger time" is stored 
   }
@@ -530,21 +478,11 @@ void set_heater_power_with_PID(){
   debugV(" - PWM   >> Heater A:%d\tHeater B:%d\n", pwmA, pwmB);
 }
 
-void log_to_influxdb(){
-  // // Clear fields for reusing the point. Tags will remain the same as set above.
-  // datapoint.clearFields();
+void post_data_into_influxdb(){
+  // Log activity
+  debugI("Writing into Influx\n");
 
-  // // Store measured value into point
-  // datapoint.addField("TempA", temperatureA);
-  // datapoint.addField("TempB", temperatureB);
-  // datapoint.addField("PowerA", powerA*100.0);
-  // datapoint.addField("PowerB", powerB*100.0);
-  // datapoint.addField("TargetA", targetTempA);
-  // datapoint.addField("TargetB", targetTempB);
-  // datapoint.addField("Error", value7);
-  // datapoint.addField("FreeHeap", ESP.getFreeHeap());
-  // datapoint.addField("DebugCounter", debugcounter);
-
+  // Clear fields for reusing the point. Tags will remain the same as set above.
   dpLabA.clearFields();
   dpLabA.addField("Temperature", temperatureA);
   dpLabA.addField("Power", powerA*100.0);
@@ -560,19 +498,12 @@ void log_to_influxdb(){
   dpMCU.addField("FreeHeap", ESP.getFreeHeap());
   dpMCU.addField("DebugCounter", debugcounter);  
 
-
-  // Print what are we exactly writing
-  debugV("Writing into Influx: %s\n", datapoint.toLineProtocol());
-
   // Check WiFi connection and reconnect if needed
   if (wifiMulti.run() != WL_CONNECTED) {
     debugE("Wifi connection lost");
   }
 
   // Write point
-  // if (!influx_client.writePoint(datapoint)) {
-  //   debugE("InfluxDB write failed: %s\n", influx_client.getLastErrorMessage());
-  // }
   if (!influx_client.writePoint(dpLabA)) {
     debugE("InfluxDB LabA write failed: %s\n", influx_client.getLastErrorMessage());
   }
@@ -582,6 +513,87 @@ void log_to_influxdb(){
   if (!influx_client.writePoint(dpMCU)) {
     debugE("InfluxDB MCU write failed: %s\n", influx_client.getLastErrorMessage());
   }
+}
+
+void get_data_from_influxdb(){
+  debugI("Getting data from Influxdb...");
+  targetTempA = query_influx_sensor("target", "BoxA");
+  targetTempB = query_influx_sensor("target", "BoxB");
+  time_delay = (int) query_influx_device("delay", "NodeMCU-ESP12E");
+  max_duty_cycleA = (int) query_influx_sensor("maxduty", "BoxA");
+  max_duty_cycleB = (int) query_influx_sensor("maxduty", "BoxB");
+
+  new_Kp = query_influx_sensor("Kp", "BoxA");
+  new_Ki = query_influx_sensor("Ki", "BoxA");
+  new_Kd = query_influx_sensor("Kd", "BoxA");
+  if ( Kp_A != new_Kp ||  Kd_A != new_Kd || Ki_A != new_Ki){
+    flagChangeKA = true;
+    Kp_A = new_Kp;
+    Kd_A = new_Kd;
+    Ki_A = new_Ki;
+  } else {
+    flagChangeKA = false;
+  }
+
+  new_Kp = query_influx_sensor("Kp", "BoxB");
+  new_Ki = query_influx_sensor("Ki", "BoxB");
+  new_Kd = query_influx_sensor("Kd", "BoxB");
+  if ( Kp_B != new_Kp ||  Kd_B != new_Kd || Ki_B != new_Ki){
+    flagChangeKB = true;
+    Kp_B = new_Kp;
+    Kd_B = new_Kd;
+    Ki_B = new_Ki;
+  } else {
+    flagChangeKB = false;
+  }  
+
+  debugV(" - Data >> Target A:%f\tTarget B:%f\tDelay:%d\tDuty A:%d\tDuty B:%d", targetTempA, targetTempB, time_delay, max_duty_cycleA, max_duty_cycleB);
+  debugV(" - Data >> A(Kp, Ki, Kd):(%f , %f, %f)\tB(Kp, Ki, Kd):(%f , %f, %f)\n", Kp_A, Ki_A, Kd_A, Kp_B, Ki_B, Kd_B);  
+}
+
+double query_influx_sensor(String field, String sensor){
+  // Construct a Flux query
+  influx_query = "from(bucket: \"LabOven\") |> range(start: -10y) |> filter(fn: (r) => r._measurement == \"SensorConfig\" and r.sensor == \"" + sensor + "\" and r._field == \"" + field + "\") |> last() |> yield()" ;
+
+  // Send query to the server and get result
+  FluxQueryResult influx_result = influx_client.query(influx_query);
+
+  influx_result.next();
+  double result =  influx_result.getValueByName("_value").getDouble(); 
+
+  return result;
+}
+
+double query_influx_device(String field, String device){
+  // Construct a Flux query
+  influx_query = "from(bucket: \"LabOven\") |> range(start: -10y) |> filter(fn: (r) => r._measurement == \"SensorConfig\" and r.device == \"" + device + "\" and r._field == \"" + field + "\") |> last() |> yield()" ;
+
+  // Send query to the server and get result
+  FluxQueryResult influx_result = influx_client.query(influx_query);
+
+  influx_result.next();
+  double result =  influx_result.getValueByName("_value").getDouble(); 
+
+  return result;
+}
+
+
+void query_influx(){
+  debugI("Getting data from Influxdb...");
+
+  // Construct a Flux query
+  // influx_query = "from(bucket: \"LabOven\") |> range(start: -10y) |> filter(fn: (r) => r[\"_measurement\"] == \"SensorConfig\") |> last() |> yield()";
+
+  // // Send query to the server and get result
+  // FluxQueryResult influx_result = influx_client.query(influx_query);
+
+  // while (influx_result.next()) {
+  //   field = influx_result.getValueByName("_field").getString();
+  //   sensor = influx_result.getValueByName("sensor").getString();
+  //   device = influx_result.getValueByName("device").getString();
+  //   value = influx_result.getValueByName("_value").getDouble(); 
+  //   debugI("Field: %s = %f\t Sensor: %s\t Device: %s", field, value, sensor, device);
+  // }
 }
 
 // -------------------------
