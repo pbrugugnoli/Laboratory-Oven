@@ -57,8 +57,8 @@
 #define TZ_INFO "UTC-3"
 
 // Influx parameters
+//#define INFLUXDB_TOKEN ... in credentials file
 #define INFLUXDB_URL "http://192.168.27.127:8086"
-#define INFLUXDB_TOKEN "pMvYfh7lmJfRhb3rBcOWlCmXtswhLOxDSEo-Z8GBx6KBXfi0ZR935B4xAKsjfSNUwgq_iX99xT7vfOQVafkVqA=="
 #define INFLUXDB_ORG "PEB"
 #define INFLUXDB_BUCKET "LabOven"
 
