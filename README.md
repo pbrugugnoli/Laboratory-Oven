@@ -1,4 +1,4 @@
-'# Controlled and Monitored Laboratory Oven
+# Controlled and Monitored Laboratory Oven
 
 ## Design
 
