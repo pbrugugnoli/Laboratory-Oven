@@ -1,4 +1,4 @@
-# Controlled and Monitored Laboratory Oven
+'# Controlled and Monitored Laboratory Oven
 
 ## Design
 
@@ -86,3 +86,19 @@
 	- Temperature Sensos & Thermogel ![alt text](https://github.com/pbrugugnoli/Laboratory-Oven/blob/master/Images/Laboratory-Ovens-(estufas)-Temperature-Sensor-and-Thermogel.jpeg?raw=true)
 
 	- Heater Element (adaptation with tea silicon heater) ![alt text](https://github.com/pbrugugnoli/Laboratory-Oven/blob/master/Images/Laboratory-Ovens-(estufas)-Heater-Element.jpeg?raw=true)
+
+ ## Review 1
+ - The solution based on HTTP Redirect to save data directly from the NODEMCU to Google Sheets turned out to be problematic causing unpredictable crashes of the NODEMCU. This crashes are really dangerous because the PWM signals got a 100% duty cycle, providing 12v to the 5V heater elements, burning them out (luckily there were some wood with alluminum foil to isolate them from the styrofoam boxes)
+ - After many, many attempts to nail down the origen of the crashes (without any success), the program was converted to publish data directly to a InfluxDB hosted in a docker container of a desktop computer. It turned out to be a great solution as InfluxDB 2.0 has already a web interface and dashboards, but with 3 drawbacks:  (1) the desktop has to stay on as a server, (2) I couldn't manage to install InfluxDB 2.0 on a Raspberry PI 1B (32bit arm), and (3) to get access to the data when I am out of home without a proper VPN/security in place the data published to the InfluxDB triggers a task to write them down into the original Google Sheets (a quite interesting solution from a technical point of view and proof of concept, but quite ugly from a process stand point) - see branch InfluxDB-Logging
+   
+ ## Review 2
+ - Without a short term solution for a local logging server, the program was changed once more to post that into a public MQQT (Adafruit), that turned out to be a great solution - simple code, data access from everywhere, ... but limited to 10 feeds. - see branch Adafruit-Logging
+
+ ## Review 3
+ - Even though no more system crashes were observed after Review 1 and 2, it cannot be completely ruled out and a solution to avoid burn down my house had to be implemented. One alternative is to change the power supply to limit the voltage to 5 volts (a 6V/7V power supply, for example, to compensate for the 1V/2V voltage drop of the L298N. Another option, more general and implemented here, is a supervisor circuit that monitors the average voltage and shuts down the power provided to the L298N (hence to the heater elements).
+- The developed supervisor circuit consists of:
+  - low pass filter + adjustable voltage comparator
+  - latch circuit (once the voltage exceeds the defined limit, the circuit does not turn on until a push button is pressed to reset the circuit)
+  - a mosfet switch output
+- supervisor circuit  ![alt text](https://github.com/pbrugugnoli/Laboratory-Oven/blob/master/Images/Supervisor-Circuit.jpeg?raw=true)
+- circuit desing and simulation http://tinyurl.com/ymkj8vpk
