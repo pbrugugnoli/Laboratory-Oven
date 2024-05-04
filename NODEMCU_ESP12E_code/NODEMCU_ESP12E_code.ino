@@ -1,14 +1,11 @@
-// Laboratory Oven control system - Version 3
-// - Adafruit.io service 
+// Laboratory Oven control system - Version 4
+// - MQTT - Mosquitto + Node REd + Influxdb2
 // - PID control
 
 #include <Arduino.h> 
 #include "C:\Users\pbrug\Documents\01. PEB Personal\Credenciais Cloud\SecurityGit\credentials.h"
-#include <ESP8266WiFi.h>
 
-#include <EEPROM.h>
-#include <ArduinoOTA.h>
-#include <ESP8266WebServer.h>
+#include "EspMQTTClient.h"
 #include <ESP8266mDNS.h> 
 
 #include <ArduinoJson.h>
@@ -19,7 +16,7 @@
 //#define DEBUG_DISABLED true
 
 // SELECT BETWEEN SERIAL or NETWORK DEBUG
-#define REMOTE_DEBUG
+//#define REMOTE_DEBUG
 
 #ifdef REMOTE_DEBUG
   // OVER NETWORK DEBUG
@@ -42,42 +39,15 @@
 // Configuring INFLUXDB
 
 // Declare feeds to publish sensor data 
-#include "AdafruitIO_WiFi.h"
-AdafruitIO_WiFi io(IO_USERNAME, IO_KEY, wifi_ssid, wifi_password);
-AdafruitIO_Feed *feed_tempA = io.feed("laboven.tempa");
-AdafruitIO_Feed *feed_tempB = io.feed("laboven.tempb");
-AdafruitIO_Feed *feed_powerA = io.feed("laboven.powera");
-AdafruitIO_Feed *feed_powerB = io.feed("laboven.powerb");
-AdafruitIO_Feed *feed_targetA = io.feed("laboven.targeta");
-AdafruitIO_Feed *feed_targetB = io.feed("laboven.targetb");
-
-AdafruitIO_Feed *feed_delay = io.feed("laboven.delay");
-AdafruitIO_Feed *feed_configA = io.feed("laboven.configa");
-AdafruitIO_Feed *feed_configB = io.feed("laboven.configb");
-
-//AdafruitIO_Feed *feed_counter = io.feed("laboven.counter");
-
-
-// Configuration for fallback access point 
-// if Wi-Fi connection fails.
-IPAddress AP_IP = IPAddress(10,1,1,1);
-IPAddress AP_subnet = IPAddress(255,255,255,0);
-
-// Wi-Fi connection parameters.
-// It will be read from the flash during setup.
-struct WifiConf {
-  char wifi_ssid[50];
-  char wifi_password[50];
-  // Make sure that there is a 0 
-  // that terminatnes the c string
-  // if memory is not initalized yet.
-  char cstr_terminator = 0; // make sure
-};
-WifiConf wifiConf;
-
-// Web server for editing configuration.
-// 80 is the default http port.
-ESP8266WebServer server(80);
+EspMQTTClient client(
+  wifi_ssid,
+  wifi_password,
+  "192.168.27.4",  // MQTT Broker server ip
+  MQTT_USERNAME,   // Can be omitted if not needed
+  MQTT_PASSWORD,   // Can be omitted if not needed
+  "LABOVEN",       // Client name that uniquely identify your device
+  1883             // The MQTT port, default to 1883. this line can be omitted
+);
 
 // mDNS
 const char* mdnsName = "LabOven";    // Domain name for the mDNS responder
@@ -97,8 +67,10 @@ int ENB = D8;
 int IN3 = D3;
 int IN4 = D4;
 
-// variables do retrieve and parse data from Adafruit messages
+// variables do retrieve and parse data from Mosquitto messages
 // for some unknown (yet) reason, the receive string has maximum length=52
+String payload_base = "";
+String payload = "";
 String json_response;
 DynamicJsonDocument doc(1024);
 
@@ -159,17 +131,11 @@ void setup() {
   Serial.begin(115200);        
    while(! Serial);
    
-  // init EEPROM object 
-  // to read/write wifi configuration.
-  EEPROM.begin(512);
-  readWifiConf();
-
-  // Connect to wifi or setup acess point in case of failure
-  if (!connectToWiFi()) {
-    setUpAccessPoint();
-  }
-  setUpWebServer();
-  setUpOverTheAirProgramming();
+  // Optional functionalities of EspMQTTClient
+  client.enableDebuggingMessages(); // Enable debugging messages sent to serial output
+  client.enableHTTPWebUpdater();    // Enable the web updater. User and password default to values of MQTTUsername and MQTTPassword. These can be overridded with enableHTTPWebUpdater("user", "password").
+  client.enableOTA(OTA_password, 8266);   // Enable OTA (Over The Air) updates. Password defaults to MQTTPassword. Port is the default OTA port. Can be overridden with enableOTA("password", port).
+  client.enableLastWillMessage("TestClient/lastwill", "I am going offline");  // You can activate the retain flag by setting the third parameter to true
 
 	// Initialize RemoteDebug
   #ifdef REMOTE_DEBUG  
@@ -185,35 +151,10 @@ void setup() {
   // Onboard LED
   pinMode(LED_BUILTIN, OUTPUT);  // GPIO 16
 
-
-  // Connect to Adafruit.io
-  debugI("Connecting to Adafruit IO");
-
-  io.connect();
-
-  // wait for a connection
-  while(io.status() < AIO_CONNECTED) {
-    debugV("Trying ...");
-    delay(500);
-  }
-
-  // we are connected
-  debugI("Connected to Adadruit.io: %s", io.statusText());
-
-  // subscribe
-  feed_delay->onMessage(handleMessage_delay);
-  feed_configA->onMessage(handleMessage_configA);
-  feed_configB->onMessage(handleMessage_configB);
-
-  // get last published values
-  feed_delay->get();
-  feed_configA->get();
-  feed_configB->get();
-
   // Set Sensor A and B
   debugV("Setting up sensors...");
-  dhtA.setup(DHTpin1, DHTesp::DHT11); //for DHT11 Connect DHT sensor to GPIO 14
-  dhtB.setup(DHTpin2, DHTesp::DHT11); //for DHT11 Connect DHT sensor to GPIO 12
+  dhtA.setup(DHTpin1, DHTesp::DHT22); //for DHT11 Connect DHT sensor to GPIO 14
+  dhtB.setup(DHTpin2, DHTesp::DHT22); //for DHT11 Connect DHT sensor to GPIO 12
   minsampleperiod = max(dhtA.getMinimumSamplingPeriod(), dhtB.getMinimumSamplingPeriod());
 
   // Setup L298N driver pins
@@ -241,7 +182,7 @@ void setup() {
   myPIDB.SetOutputLimits(0.0, 1.0);
   update_PID_settings();
 
-  // Start mDNS
+  // // Start mDNS
   startmDNS(); 
 }
 
@@ -253,14 +194,8 @@ void loop() {
   // Debug OMM
   debugV("*** Begin Loop - Free Heap Memory:%u\t Max Block Size:%u\n", ESP.getFreeHeap(), ESP.getMaxFreeBlockSize());
 
-  // Give processing time for ArduinoOTA.
-  ArduinoOTA.handle();
-
-  // Give processing time for the webserver.
-  server.handleClient();
-
-  // io.run(); is required for all sketches to keep the client connected to io.adafruit.com, and processes any incoming data.
-  io.run();  
+  // wifi & MQTT client stuff
+  client.loop();
 
   // After each time_delay log retrieve parameters from google sheet and write log
   currentTime = millis();                           // get current time
@@ -269,14 +204,7 @@ void loop() {
   if (elapsedTime > time_delay) {
     debugcounter += time_delay/60.0;
 
-    // read and write data into influxdb
-    if (WiFi.status() != WL_CONNECTED){
-      debugI("Wifi was disconnected... Trying to reconnect");
-      connectToWiFi();
-    }
-    if (WiFi.status() == WL_CONNECTED){
-      publish_data_to_adafruit_io();
-    }
+    publish_data_to_mqtt();
 
     previousTime = currentTime;      // the last "trigger time" is stored 
   }
@@ -386,30 +314,35 @@ void set_heater_power_with_PID(){
   debugV(" - PWM   >> Heater A:%d\tHeater B:%d\n", pwmA, pwmB);
 }
 
-void publish_data_to_adafruit_io(){
+void publish_data_to_mqtt(){
   // Log activity
-  debugI("Publishing to Adafruit.io\n");
+  debugI("Publishing to Mosquitto\n");
 
-  feed_tempA->save(temperatureA);
-  feed_powerA->save(powerA*100.0);
-  feed_targetA->save(targetTempA);
+  // prepare payload and publish
+  payload = payload_base + "{\"s\": " + "\"Sensor A\"" + ", \"t\": " + temperatureA + ", \"h\": " + humidityA + ", \"p\": " + (powerA*100.0) + ", \"tt\": " + targetTempA + "}";
+  client.publish("/laboven/sensorA", payload);
 
-  feed_tempB->save(temperatureB);
-  feed_powerB->save(powerB*100.0);
-  feed_targetB->save(targetTempB);
+  payload = payload_base + "{\"s\": " + "\"Sensor B\"" + ", \"t\": " + temperatureB + ", \"h\": " + humidityB + ", \"p\": " + (powerB*100.0) + ", \"tt\": " + targetTempB + "}";
+  client.publish("/laboven/sensorB", payload);
 
-//  feed_counter->save(debugcounter);
+  client.publish("/laboven/counter", String(debugcounter)); 
 }
 
-void handleMessage_delay(AdafruitIO_Data *data) {
+#include <cstdlib> 
+float parseFloat(const String &str) {
+    // Use atof to convert string to float
+    return atof(str.c_str());
+}
+
+void handleMessage_delay(const String & payload) {
   debugI("Receiving published feed... - Delay");
-  time_delay = (int) data->toFloat();
+  time_delay = (int) parseFloat(payload);
   debugV(" - New delay value: %u", time_delay);
 }
 
-void handleMessage_configA(AdafruitIO_Data *data) {
+void handleMessage_configA(const String & payload) {
   debugI("Receiving published feed... - Config A");
-  json_response = data->toString();
+  json_response = payload;
   deserializeJson(doc, json_response);    
   debugV(" - json >> %u", json_response.length());  
   debugV(" - Kd >> %f", doc["Kd"]);
@@ -431,9 +364,9 @@ void handleMessage_configA(AdafruitIO_Data *data) {
   update_PID_settings();
 }
 
-void handleMessage_configB(AdafruitIO_Data *data) {
+void handleMessage_configB(const String & payload) {
   debugI("Receiving published feed... - Config B");
-  json_response = data->toString();
+  json_response = payload;
   deserializeJson(doc, json_response);    
 
   targetTempB = doc["t"];
@@ -453,9 +386,27 @@ void handleMessage_configB(AdafruitIO_Data *data) {
   update_PID_settings();
 }
 
-// -------------------------
-// OTA CODE AND SAFEGUARDS
-// -------------------------
+void onConnectionEstablished()
+{
+  // Subscribe to "mytopic/test" and display received message to Serial
+  client.subscribe("/laboven/delay", handleMessage_delay);
+  client.subscribe("/laboven/configA", handleMessage_delay);
+  client.subscribe("/laboven/configB", handleMessage_delay);
+
+  // Subscribe to "mytopic/wildcardtest/#" and display received message to Serial
+  client.subscribe("/peb/wildcardtest/#", [](const String & topic, const String & payload) {
+    Serial.println("(From wildcard) topic: " + topic + ", payload: " + payload);
+  });
+
+  // Publish a message to "mytopic/test"
+  client.publish("/peb/test", "This is a message"); // You can activate the retain flag by setting the third parameter to true
+
+  // Execute delayed instructions
+  client.executeDelayed(5 * 1000, []() {
+    client.publish("/peb/wildcardtest/test123", "This is a message sent 5 seconds later");
+  });
+}
+
 void startmDNS() { // Start the mDNS responder
   debugA("Starting mDNS responder ...");
 
@@ -464,168 +415,4 @@ void startmDNS() { // Start the mDNS responder
   } else {
     debugA("mDNS responder started - http://%s.local", mdnsName);  
   }
-}
-
-void readWifiConf() {
-
-  debugI("Retrieving data from EEPROM...");
-
-  // Read wifi conf from flash
-  for (int i=0; i<sizeof(wifiConf); i++) {
-    ((char *)(&wifiConf))[i] = char(EEPROM.read(i));
-  }
-  // Make sure that there is a 0 
-  // that terminatnes the c string
-  // if memory is not initalized yet.
-  wifiConf.cstr_terminator = 0;
-  
-  debugV(" - EEPROM >> SSID: %s \t PASS: *******\n");
-}
-
-void writeWifiConf() {
-
-  debugI("Writing data into EEPROM...\n");
-
-  for (int i=0; i<sizeof(wifiConf); i++) {
-    EEPROM.write(i, ((char *)(&wifiConf))[i]);
-  }
-  EEPROM.commit();
-}
-
-bool connectToWiFi() {
-  debugA("Connecting to WiFi - SSID:%s", wifiConf.wifi_ssid);
-
-  WiFi.mode(WIFI_STA); // station mode
-  WiFi.setSleepMode(WIFI_NONE_SLEEP);
-  WiFi.begin(wifiConf.wifi_ssid, wifiConf.wifi_password);
-
-  if (WiFi.waitForConnectResult() == WL_CONNECTED) {
-    debugA(" - Connected with IP: %d.%d.%d.%d\n", WiFi.localIP()[0], 
-    WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3]);    
-    return true;
-  } else {
-    debugA(
-      " - Connection to WiFi Failed!\n");
-    return false;
-  }
-}
-
-void setUpAccessPoint() {
-    debugI("Setting up access point...");
-    debugV(" - SSID: %s\t\t PASS%s", AP_ssid, AP_password);
-
-    WiFi.mode(WIFI_AP_STA);
-    WiFi.softAPConfig(AP_IP, AP_IP, AP_subnet);
-    if (WiFi.softAP(AP_ssid, AP_password)) {
-      debugV(" - Access point set to IP:%s", WiFi.softAPIP());
-    } else {
-      debugE("Setting up access point failed!");
-    }
-}
-
-void setUpWebServer() {
-  server.on("/", handleWebServerRequest);
-  server.begin();
-}
-
-void handleWebServerRequest() {
-
-  debugI("Handling web server request...");
-  bool save = false;
-
-  if (server.hasArg("ssid") && server.hasArg("password")) {
-    server.arg("ssid").toCharArray(
-      wifiConf.wifi_ssid,
-      sizeof(wifiConf.wifi_ssid));
-    server.arg("password").toCharArray(
-      wifiConf.wifi_password,
-      sizeof(wifiConf.wifi_password));
-
-    writeWifiConf();
-    save = true;
-
-    debugV(" - SSID: %s", server.arg("ssid"));
-
-  }
-
-  String message = "";
-  message += "<!DOCTYPE html>";
-  message += "<html>";
-  message += "<head>";
-  message += "<title>ESP8266 conf</title>";
-  message += "</head>";
-  message += "<body>";
-  if (save) {
-    message += "<div>Saved! Rebooting...</div>";
-  } else {
-    message += "<h1>Wi-Fi conf</h1>";
-    message += "<form action='/' method='POST'>";
-    message += "<div>SSID:</div>";
-    message += "<div><input type='text' name='ssid' value='" + String(wifiConf.wifi_ssid) + "'/></div>";
-    message += "<div>Password:</div>";
-    message += "<div><input type='password' name='password' value='" + String(wifiConf.wifi_password) + "'/></div>";
-    message += "<div><input type='submit' value='Save'/></div>";
-    message += "</form>";
-  }
-  message += "</body>";
-  message += "</html>";
-  server.send(200, "text/html", message);
-
-  if (save) {
-    debugV("Wi-Fi conf saved. Rebooting...");
-    delay(1000);
-    ESP.restart();
-  }
-}
-
-void setUpOverTheAirProgramming() {
-
-  // Change OTA port. 
-  // Default: 8266
-  ArduinoOTA.setPort(8266);
-
-  // Change the name of how it is going to show up in Arduino IDE.
-  ArduinoOTA.setHostname("PEB_NODEMCU_ESP12E");
-
-  // Re-programming passowrd. 
-  // ArduinoOTA.setPassword(OTA_password);
-  ArduinoOTA.setPasswordHash(OTA_password_hash);
-
-  ArduinoOTA.onStart([]() {
-    String type;
-    if (ArduinoOTA.getCommand() == U_FLASH) {
-      type = "sketch";
-    } else {  // U_FS
-      type = "filesystem";
-    }
-
-    // NOTE: if updating FS this would be the place to unmount FS using FS.end()
-    debugI("OTA: Start updating %s", type);
-  });
-
-  ArduinoOTA.onEnd([]() {
-    debugI("OTA: End update");
-  });
-
-  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-    debugV("Progress: %u%%\r", (progress / (total / 100)));
-  });
-
-  ArduinoOTA.onError([](ota_error_t error) {
-    debugE("Error[%u]: ", error);
-    if (error == OTA_AUTH_ERROR) {
-      debugE(" - Auth Failed\n");
-    } else if (error == OTA_BEGIN_ERROR) {
-      debugE(" - Begin Failed\n");
-    } else if (error == OTA_CONNECT_ERROR) {
-      debugE(" - Connect Failed\n");
-    } else if (error == OTA_RECEIVE_ERROR) {
-      debugE(" - Receive Failed\n");
-    } else if (error == OTA_END_ERROR) {
-      debugE(" - End Failed\n");
-    }
-  });
-
-  ArduinoOTA.begin();
-  debugI("OTA: Ready");
 }
