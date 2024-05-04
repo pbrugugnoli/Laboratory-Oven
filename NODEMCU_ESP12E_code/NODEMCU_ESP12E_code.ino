@@ -9,6 +9,7 @@
 #include <EEPROM.h>
 #include <ArduinoOTA.h>
 #include <ESP8266WebServer.h>
+#include <ESP8266mDNS.h> 
 
 #include <ArduinoJson.h>
 #include "DHTesp.h"
@@ -54,6 +55,8 @@ AdafruitIO_Feed *feed_delay = io.feed("laboven.delay");
 AdafruitIO_Feed *feed_configA = io.feed("laboven.configa");
 AdafruitIO_Feed *feed_configB = io.feed("laboven.configb");
 
+//AdafruitIO_Feed *feed_counter = io.feed("laboven.counter");
+
 
 // Configuration for fallback access point 
 // if Wi-Fi connection fails.
@@ -76,6 +79,8 @@ WifiConf wifiConf;
 // 80 is the default http port.
 ESP8266WebServer server(80);
 
+// mDNS
+const char* mdnsName = "LabOven";    // Domain name for the mDNS responder
 
 // Temperature Sensors
 #define DHTpin1 14   //D5 of NodeMCU is GPIO14
@@ -236,6 +241,8 @@ void setup() {
   myPIDB.SetOutputLimits(0.0, 1.0);
   update_PID_settings();
 
+  // Start mDNS
+  startmDNS(); 
 }
 
 // ------------------------------------------
@@ -280,6 +287,7 @@ void loop() {
   
   // RemoteDebug handle
   debugHandle();
+  MDNS.update(); 
   
   // a delay due to DHT sensor limitations
   delay(minsampleperiod);
@@ -389,6 +397,8 @@ void publish_data_to_adafruit_io(){
   feed_tempB->save(temperatureB);
   feed_powerB->save(powerB*100.0);
   feed_targetB->save(targetTempB);
+
+//  feed_counter->save(debugcounter);
 }
 
 void handleMessage_delay(AdafruitIO_Data *data) {
@@ -417,6 +427,8 @@ void handleMessage_configA(AdafruitIO_Data *data) {
   }  
 
   debugV(" - Data A >> Target: %f\tDuty: %d\t(Kp, Ki, Kd):(%f , %f, %f)\n", targetTempA, max_duty_cycleA, Kp_A, Ki_A, Kd_A);
+
+  update_PID_settings();
 }
 
 void handleMessage_configB(AdafruitIO_Data *data) {
@@ -437,11 +449,23 @@ void handleMessage_configB(AdafruitIO_Data *data) {
   }
 
   debugV(" - Data B >> Target: %f\tDuty: %d\t(Kp, Ki, Kd):(%f , %f, %f)\n", targetTempB, max_duty_cycleB, Kp_B, Ki_B, Kd_B);
+
+  update_PID_settings();
 }
 
 // -------------------------
 // OTA CODE AND SAFEGUARDS
 // -------------------------
+void startmDNS() { // Start the mDNS responder
+  debugA("Starting mDNS responder ...");
+
+  if (!MDNS.begin(mdnsName)) {             // 
+    debugE("Error setting up MDNS responder!");
+  } else {
+    debugA("mDNS responder started - http://%s.local", mdnsName);  
+  }
+}
+
 void readWifiConf() {
 
   debugI("Retrieving data from EEPROM...");
@@ -469,17 +493,19 @@ void writeWifiConf() {
 }
 
 bool connectToWiFi() {
-  debugI("Connecting to WiFi - SSID:%s", wifiConf.wifi_ssid);
+  debugA("Connecting to WiFi - SSID:%s", wifiConf.wifi_ssid);
 
   WiFi.mode(WIFI_STA); // station mode
   WiFi.setSleepMode(WIFI_NONE_SLEEP);
   WiFi.begin(wifiConf.wifi_ssid, wifiConf.wifi_password);
 
   if (WiFi.waitForConnectResult() == WL_CONNECTED) {
-    debugV(" - Connected with IP: %s\n", WiFi.localIP());
+    debugA(" - Connected with IP: %d.%d.%d.%d\n", WiFi.localIP()[0], 
+    WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3]);    
     return true;
   } else {
-    debugE(" - Connection to WiFi Failed!\n");
+    debugA(
+      " - Connection to WiFi Failed!\n");
     return false;
   }
 }
