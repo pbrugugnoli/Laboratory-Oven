@@ -194,9 +194,6 @@ void loop() {
   // Debug OMM
   debugV("*** Begin Loop - Free Heap Memory:%u\t Max Block Size:%u\n", ESP.getFreeHeap(), ESP.getMaxFreeBlockSize());
 
-  // wifi & MQTT client stuff
-  client.loop();
-
   // After each time_delay log retrieve parameters from google sheet and write log
   currentTime = millis();                           // get current time
   elapsedTime = (currentTime - previousTime)/1000;  // in seconds
@@ -213,10 +210,15 @@ void loop() {
   get_data_from_sensors();
   set_heater_power_with_PID();
   
+  // MDNS handle
+  MDNS.update(); 
+
   // RemoteDebug handle
   debugHandle();
-  MDNS.update(); 
-  
+
+  // wifi & MQTT client stuff
+  client.loop();
+
   // a delay due to DHT sensor limitations
   delay(minsampleperiod);
 }
@@ -390,21 +392,8 @@ void onConnectionEstablished()
 {
   // Subscribe to "mytopic/test" and display received message to Serial
   client.subscribe("/laboven/delay", handleMessage_delay);
-  client.subscribe("/laboven/configA", handleMessage_delay);
-  client.subscribe("/laboven/configB", handleMessage_delay);
-
-  // Subscribe to "mytopic/wildcardtest/#" and display received message to Serial
-  client.subscribe("/peb/wildcardtest/#", [](const String & topic, const String & payload) {
-    Serial.println("(From wildcard) topic: " + topic + ", payload: " + payload);
-  });
-
-  // Publish a message to "mytopic/test"
-  client.publish("/peb/test", "This is a message"); // You can activate the retain flag by setting the third parameter to true
-
-  // Execute delayed instructions
-  client.executeDelayed(5 * 1000, []() {
-    client.publish("/peb/wildcardtest/test123", "This is a message sent 5 seconds later");
-  });
+  client.subscribe("/laboven/configA", handleMessage_configA);
+  client.subscribe("/laboven/configB", handleMessage_configB);
 }
 
 void startmDNS() { // Start the mDNS responder
